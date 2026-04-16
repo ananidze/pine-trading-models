@@ -110,7 +110,8 @@ disp_bear_css  = input.color(color.new(#ff9800, 75), 'Bearish Color', group = 'D
 // INPUTS — FAIR VALUE GAPS
 // ============================================================================
 
-show_fvg     = input.bool(true,  'Show FVGs',       group = 'Fair Value Gaps', tooltip = 'Display Fair Value Gap zones — 3-bar price imbalances where no trading occurred.')
+show_fvg          = input.bool(true,  'Show FVGs',               group = 'Fair Value Gaps', tooltip = 'Display Fair Value Gap zones — 3-bar price imbalances where no trading occurred.')
+fvg_require_disp  = input.bool(true,  'Require Displacement',    group = 'Fair Value Gaps', tooltip = 'Only create an FVG when the middle bar of the 3-bar pattern is a displacement candle (strong impulse). Filters out low-quality gaps.')
 fvg_bull_css = input.color(color.new(#1a9e00, 85), 'Bullish Fill', inline = 'fvg_css', group = 'Fair Value Gaps')
 fvg_bear_css = input.color(color.new(#e01000, 85), 'Bearish Fill', inline = 'fvg_css', group = 'Fair Value Gaps')
 fvg_max      = input.int(5,      'Max FVGs',        group = 'Fair Value Gaps', minval = 1, maxval = 20, tooltip = 'Maximum number of unmitigated FVG zones shown per side.')
@@ -420,8 +421,11 @@ disp_bear = show_disp and barstate.isconfirmed and disp_body >= disp_threshold a
 // FVG detected at close of the middle bar (bar[1]) — confirmed, no repainting
 // Bullish FVG: gap between high[2] and low[0]  (low[0] > high[2])
 // Bearish FVG: gap between low[2] and high[0]  (high[0] < low[2])
-fvg_bull_cond = show_fvg and barstate.isconfirmed and low > high[2]
-fvg_bear_cond = show_fvg and barstate.isconfirmed and high < low[2]
+// When fvg_require_disp is on, bar[1] (the impulse candle) must be a displacement bar
+fvg_disp_bull_ok = not fvg_require_disp or disp_bull[1]
+fvg_disp_bear_ok = not fvg_require_disp or disp_bear[1]
+fvg_bull_cond = show_fvg and barstate.isconfirmed and low > high[2] and fvg_disp_bull_ok
+fvg_bear_cond = show_fvg and barstate.isconfirmed and high < low[2] and fvg_disp_bear_ok
 
 // FVG zone boundaries (set at detection bar)
 fvg_bull_top_raw = low          // candle[0] low  = top of gap from below
