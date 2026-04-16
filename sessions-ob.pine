@@ -98,6 +98,15 @@ liq_bsl_css   = input.color(color.new(#e01000, 0), 'BSL Color', inline = 'liq_cs
 liq_ssl_css   = input.color(color.new(#1a9e00, 0), 'SSL Color', inline = 'liq_css', group = 'Liquidity (EQH/EQL)')
 
 // ============================================================================
+// INPUTS — DISPLACEMENT
+// ============================================================================
+
+show_disp      = input.bool(true,   'Show Displacement',   group = 'Displacement', tooltip = 'Detect and highlight strong impulsive candles (displacement).')
+disp_mult      = input.float(1.5,   'ATR Multiplier',      group = 'Displacement', minval = 0.1, step = 0.1, tooltip = 'Minimum candle body size as a multiple of ATR(14) to qualify as displacement. Higher = fewer, stronger moves.')
+disp_bull_css  = input.color(color.new(#00bcd4, 75), 'Bullish Color', group = 'Displacement', tooltip = 'Color used when a bullish displacement candle is detected.')
+disp_bear_css  = input.color(color.new(#ff9800, 75), 'Bearish Color', group = 'Displacement', tooltip = 'Color used when a bearish displacement candle is detected.')
+
+// ============================================================================
 // INPUTS — FAIR VALUE GAPS
 // ============================================================================
 
@@ -390,6 +399,19 @@ mitigated_bear = remove_mitigated(bear_top, bear_btm, bear_left, bear_avg, bear_
 
 set_order_blocks(bull_top, bull_btm, bull_left, bull_avg, bull_scores, bull_ext_last, bg_bull_css, bull_css, bull_avg_css, true)
 set_order_blocks(bear_top, bear_btm, bear_left, bear_avg, bear_scores, bear_ext_last, bg_bear_css, bear_css, bear_avg_css, false)
+
+// ============================================================================
+// DISPLACEMENT DETECTION
+// ============================================================================
+
+// Reuse sys_atr (ta.atr(14)) — already computed above
+// Body must be >= ATR * multiplier AND candle must close in the direction of move
+disp_body      = math.abs(close - open)
+disp_threshold = sys_atr * disp_mult
+
+disp_bull = show_disp and barstate.isconfirmed and disp_body >= disp_threshold and close > open
+disp_bear = show_disp and barstate.isconfirmed and disp_body >= disp_threshold and close < open
+
 
 // ============================================================================
 // FAIR VALUE GAP DETECTION
@@ -759,6 +781,13 @@ plot(bull_ob, 'Bull OB', bull_css, 2, plot.style_linebr, offset = -length, displ
 plot(bear_ob, 'Bear OB', bear_css, 2, plot.style_linebr, offset = -length, display = display.none, force_overlay = true)
 
 // ============================================================================
+// PLOTS — DISPLACEMENT
+// ============================================================================
+
+// Candle color override — draws a tinted candle on top of displacement bars
+plotcandle(show_disp and (disp_bull or disp_bear) ? open : na, high, low, close, 'Displacement Candle', disp_bull ? color.new(disp_bull_css, 20) : color.new(disp_bear_css, 20), disp_bull ? color.new(disp_bull_css, 20) : color.new(disp_bear_css, 20), force_overlay = true)
+
+// ============================================================================
 // SMART ALERTS — ORDER BLOCKS
 // ============================================================================
 
@@ -810,3 +839,15 @@ if ssl_sweep_alert
 
 alertcondition(bsl_sweep_alert, 'Liquidity Swept (BSL)', 'BSL level was swept')
 alertcondition(ssl_sweep_alert, 'Liquidity Swept (SSL)', 'SSL level was swept')
+
+// ============================================================================
+// SMART ALERTS — DISPLACEMENT
+// ============================================================================
+
+if disp_bull
+    alert(syminfo.ticker + ' — Bullish Displacement @ ' + str.tostring(close, format.mintick) + '  (body ' + str.tostring(disp_body, format.mintick) + ' / ATR ' + str.tostring(sys_atr, format.mintick) + ')', alert.freq_once_per_bar_close)
+if disp_bear
+    alert(syminfo.ticker + ' — Bearish Displacement @ ' + str.tostring(close, format.mintick) + '  (body ' + str.tostring(disp_body, format.mintick) + ' / ATR ' + str.tostring(sys_atr, format.mintick) + ')', alert.freq_once_per_bar_close)
+
+alertcondition(disp_bull, 'Displacement (Bullish)', 'Strong bullish impulse candle detected')
+alertcondition(disp_bear, 'Displacement (Bearish)', 'Strong bearish impulse candle detected')
