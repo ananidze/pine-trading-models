@@ -98,6 +98,24 @@ liq_bsl_css   = input.color(color.new(#e01000, 0), 'BSL Color', inline = 'liq_cs
 liq_ssl_css   = input.color(color.new(#1a9e00, 0), 'SSL Color', inline = 'liq_css', group = 'Liquidity (EQH/EQL)')
 
 // ============================================================================
+// INPUTS — PREMIUM / DISCOUNT ZONES
+// ============================================================================
+
+grp_pd             = 'Premium & Discount'
+show_pd            = input.bool(true,  'Show P&D Zones',        group = grp_pd,
+     tooltip = 'Show Premium (above 50%) and Discount (below 50%) zones based on the most recent swing high and swing low.')
+pd_swing_length    = input.int(20,     'Swing Length',          group = grp_pd, minval = 5, maxval = 100,
+     tooltip = 'Bars on each side used to detect the swing high and swing low that define the P&D range.')
+show_pd_zones      = input.bool(true,  'Shade Zones',           group = grp_pd,
+     tooltip = 'Fill the Premium and Discount half-ranges with a translucent color.')
+pd_premium_css     = input.color(color.new(#ef5350, 88), 'Premium Fill', inline = 'pd_css', group = grp_pd)
+pd_discount_css    = input.color(color.new(#26a69a, 88), 'Discount Fill', inline = 'pd_css', group = grp_pd)
+pd_eq_css          = input.color(color.new(#9598a1, 55), 'Equilibrium Line', group = grp_pd,
+     tooltip = 'Color of the midline drawn at the 50% equilibrium level.')
+pd_use_filter      = input.bool(true,  'Use as Setup Filter',   group = grp_pd,
+     tooltip = 'When enabled: bullish ICT setups are only valid in Discount, bearish ICT setups only in Premium.')
+
+// ============================================================================
 // INPUTS — DISPLACEMENT
 // ============================================================================
 
@@ -105,6 +123,24 @@ show_disp      = input.bool(true,   'Show Displacement',   group = 'Displacement
 disp_mult      = input.float(1.5,   'ATR Multiplier',      group = 'Displacement', minval = 0.1, step = 0.1, tooltip = 'Minimum candle body size as a multiple of ATR(14) to qualify as displacement. Higher = fewer, stronger moves.')
 disp_bull_css  = input.color(color.new(#00bcd4, 75), 'Bullish Color', group = 'Displacement', tooltip = 'Color used when a bullish displacement candle is detected.')
 disp_bear_css  = input.color(color.new(#ff9800, 75), 'Bearish Color', group = 'Displacement', tooltip = 'Color used when a bearish displacement candle is detected.')
+
+// ============================================================================
+// INPUTS — ICT ENTRY MODEL
+// ============================================================================
+
+grp_ict            = 'ICT Entry Model'
+ict_enable         = input.bool(true,  'Enable Entry Model', group = grp_ict,
+     tooltip = 'Activates the full 4-step ICT setup filter:\n1. SSL/BSL sweep\n2. Displacement\n3. MSS\n4. Retrace into OB or FVG\nValid zones are highlighted — no arrows or signals.')
+ict_mss_lookback   = input.int(20,  'MSS Lookback (bars)', group = grp_ict, minval = 5, maxval = 100,
+     tooltip = 'Bars to look back for the swing high/low used to detect a Market Structure Shift after the sweep.')
+ict_model_window   = input.int(50,  'Setup Window (bars)', group = grp_ict, minval = 10, maxval = 200,
+     tooltip = 'Maximum bars after the sweep for steps 2–4 to complete. Resets the state machine after this window.')
+ict_bull_valid_css = input.color(color.new(#4169E1, 55), 'Valid Bullish Zone',  inline = 'ict_css', group = grp_ict,
+     tooltip = 'Fill color applied to OB/FVG zones when a valid bullish setup is active and price retraces into them.')
+ict_bear_valid_css = input.color(color.new(#708090, 55), 'Valid Bearish Zone',  inline = 'ict_css', group = grp_ict,
+     tooltip = 'Fill color applied to OB/FVG zones when a valid bearish setup is active and price retraces into them.')
+ict_alert_valid    = input.bool(true, 'Alert on Valid Setup', group = grp_ict,
+     tooltip = 'Fire an alert when price retraces into a valid OB or FVG after the full 4-step sequence is confirmed.')
 
 // ============================================================================
 // INPUTS — FAIR VALUE GAPS
@@ -234,6 +270,7 @@ remove_mitigated(ob_top, ob_btm, ob_left, ob_avg, ob_score, target, bull) =>
 
 // Pre-allocate drawing objects on bar 0; reposition on last bar
 // Accepts ob_score array and integrates strength score into label when show_ob_score is true
+// Returns ob_box array so the ICT entry model can update individual box colors
 set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ob_score, ext_last, bg_css, border_css, lvl_css, bull) =>
     var ob_box = array.new_box(0)
     var ob_lvl = array.new_line(0)
@@ -297,6 +334,8 @@ set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ob_score, ext_last, bg_css, bo
                     label.set_style(lbl, label.style_label_left)
                     label.set_textcolor(lbl, lbl_css)
                     label.set_size(lbl, lbl_sz)
+
+    ob_box
 
 // ============================================================================
 // FUNCTIONS — OB SCORING
@@ -398,8 +437,8 @@ bear_score = calc_ob_score(bear_ob_top_raw, bear_ob_btm_raw, sys_atr, sys_vol)
 mitigated_bull = remove_mitigated(bull_top, bull_btm, bull_left, bull_avg, bull_scores, target_bull, true)
 mitigated_bear = remove_mitigated(bear_top, bear_btm, bear_left, bear_avg, bear_scores, target_bear, false)
 
-set_order_blocks(bull_top, bull_btm, bull_left, bull_avg, bull_scores, bull_ext_last, bg_bull_css, bull_css, bull_avg_css, true)
-set_order_blocks(bear_top, bear_btm, bear_left, bear_avg, bear_scores, bear_ext_last, bg_bear_css, bear_css, bear_avg_css, false)
+ob_box_bull = set_order_blocks(bull_top, bull_btm, bull_left, bull_avg, bull_scores, bull_ext_last, bg_bull_css, bull_css, bull_avg_css, true)
+ob_box_bear = set_order_blocks(bear_top, bear_btm, bear_left, bear_avg, bear_scores, bear_ext_last, bg_bear_css, bear_css, bear_avg_css, false)
 
 // ============================================================================
 // DISPLACEMENT DETECTION
@@ -577,6 +616,79 @@ if barstate.islast and show_fvg_labels
             label.set_style(lbl, label.style_label_left)
 
 // ============================================================================
+// PREMIUM & DISCOUNT ZONES
+// ============================================================================
+
+// Detect swing high/low using confirmed pivots
+pd_ph = ta.pivothigh(high, pd_swing_length, pd_swing_length)
+pd_pl = ta.pivotlow(low,   pd_swing_length, pd_swing_length)
+
+// Track the most recent confirmed swing high and swing low
+var float pd_swing_high = na
+var float pd_swing_low  = na
+
+if not na(pd_ph)
+    pd_swing_high := high[pd_swing_length]
+if not na(pd_pl)
+    pd_swing_low := low[pd_swing_length]
+
+// Compute equilibrium only when both levels are known
+pd_range_valid = not na(pd_swing_high) and not na(pd_swing_low) and pd_swing_high > pd_swing_low
+pd_equil       = pd_range_valid ? math.avg(pd_swing_high, pd_swing_low) : na
+
+// Current price location relative to equilibrium
+in_premium  = pd_range_valid and close > pd_equil
+in_discount = pd_range_valid and close < pd_equil
+
+// Draw equilibrium line and shaded zones on last bar only
+var line  pd_eq_line  = na
+var box   pd_prem_box = na
+var box   pd_disc_box = na
+var label pd_prem_lbl = na
+var label pd_disc_lbl = na
+
+if show_pd and barstate.islast and pd_range_valid
+    // Remove old drawings
+    line.delete(pd_eq_line)
+    box.delete(pd_prem_box)
+    box.delete(pd_disc_box)
+    label.delete(pd_prem_lbl)
+    label.delete(pd_disc_lbl)
+
+    // Equilibrium midline — extends left to the swing high/low reference area
+    ref_bar = bar_index - pd_swing_length * 3
+    pd_eq_line := line.new(ref_bar, pd_equil, bar_index, pd_equil,
+         color  = pd_eq_css,
+         style  = line.style_dashed,
+         width  = 1,
+         extend = extend.right)
+
+    // Shaded zone boxes
+    if show_pd_zones
+        pd_prem_box := box.new(ref_bar, pd_swing_high, bar_index, pd_equil,
+             xloc         = xloc.bar_index,
+             extend       = extend.right,
+             bgcolor      = pd_premium_css,
+             border_color = na)
+        pd_disc_box := box.new(ref_bar, pd_equil, bar_index, pd_swing_low,
+             xloc         = xloc.bar_index,
+             extend       = extend.right,
+             bgcolor      = pd_discount_css,
+             border_color = na)
+
+    // Labels at the right edge
+    pd_prem_lbl := label.new(bar_index, math.avg(pd_swing_high, pd_equil), 'Premium',
+         style     = label.style_label_left,
+         color     = color.new(color.black, 100),
+         textcolor = color.new(#ef5350, 30),
+         size      = size.tiny)
+    pd_disc_lbl := label.new(bar_index, math.avg(pd_equil, pd_swing_low), 'Discount',
+         style     = label.style_label_left,
+         color     = color.new(color.black, 100),
+         textcolor = color.new(#26a69a, 30),
+         size      = size.tiny)
+
+// ============================================================================
 // LIQUIDITY DETECTION & SWEEPS
 // ============================================================================
 
@@ -738,6 +850,146 @@ if show_liq
                         ssl_sweep_alert := true
 
 // ============================================================================
+// ICT ENTRY MODEL — STATE MACHINE
+// ============================================================================
+// Tracks the 4-step ICT sequence per direction.
+// Runs AFTER the sweep engine so ssl/bsl_sweep_alert flags are current.
+//
+// State per direction:
+//   0 = idle
+//   1 = sweep confirmed, waiting for displacement
+//   2 = displacement confirmed, waiting for MSS
+//   3 = MSS confirmed — valid retrace window open
+//
+// When state == 3, any OB/FVG box that price is currently inside gets its
+// bgcolor changed to the "valid" color. No arrows or signals are drawn.
+
+var int   ict_bull_state   = 0   // bullish setup stage
+var int   ict_bear_state   = 0   // bearish setup stage
+var int   ict_bull_bar     = 0   // bar_index when current bull stage was entered
+var int   ict_bear_bar     = 0   // bar_index when current bear stage was entered
+var float ict_bull_mss_lvl = na  // swing high price must close above for bull MSS
+var float ict_bear_mss_lvl = na  // swing low  price must close below for bear MSS
+
+// Retrace flags used for alerts (reset each bar)
+var bool ict_bull_retrace = false
+var bool ict_bear_retrace = false
+ict_bull_retrace := false
+ict_bear_retrace := false
+
+if ict_enable and barstate.isconfirmed
+    // ── BULLISH: SSL swept → bullish displacement → MSS → retrace into bull OB/FVG ──
+
+    // Step 1: SSL sweep starts the sequence (P&D filter: only in Discount)
+    pd_bull_ok = not pd_use_filter or not show_pd or in_discount
+    if ssl_sweep_alert and ict_bull_state == 0 and pd_bull_ok
+        ict_bull_state   := 1
+        ict_bull_bar     := n
+        ict_bull_mss_lvl := ta.highest(high, ict_mss_lookback)
+
+    // Step 2: Bullish displacement after sweep
+    if ict_bull_state == 1 and disp_bull
+        ict_bull_state := 2
+        ict_bull_bar   := n
+
+    // Step 3: MSS — close above captured swing high
+    if ict_bull_state == 2 and not na(ict_bull_mss_lvl) and close > ict_bull_mss_lvl
+        ict_bull_state := 3
+        ict_bull_bar   := n
+
+    // Reset bull state on window expiry
+    if ict_bull_state > 0 and n - ict_bull_bar > ict_model_window
+        ict_bull_state   := 0
+        ict_bull_mss_lvl := na
+
+    // ── BEARISH: BSL swept → bearish displacement → MSS → retrace into bear OB/FVG ──
+
+    // Step 1: BSL sweep starts the sequence (P&D filter: only in Premium)
+    pd_bear_ok = not pd_use_filter or not show_pd or in_premium
+    if bsl_sweep_alert and ict_bear_state == 0 and pd_bear_ok
+        ict_bear_state   := 1
+        ict_bear_bar     := n
+        ict_bear_mss_lvl := ta.lowest(low, ict_mss_lookback)
+
+    // Step 2: Bearish displacement after sweep
+    if ict_bear_state == 1 and disp_bear
+        ict_bear_state := 2
+        ict_bear_bar   := n
+
+    // Step 3: MSS — close below captured swing low
+    if ict_bear_state == 2 and not na(ict_bear_mss_lvl) and close < ict_bear_mss_lvl
+        ict_bear_state := 3
+        ict_bear_bar   := n
+
+    // Reset bear state on window expiry
+    if ict_bear_state > 0 and n - ict_bear_bar > ict_model_window
+        ict_bear_state   := 0
+        ict_bear_mss_lvl := na
+
+// ── Step 4: Zone highlighting — paint valid OBs and FVGs ────────────────────
+// ob_box_bull / ob_box_bear are pre-allocated to ext_last slots (index matches data arrays)
+
+if ict_enable and ict_bull_state == 3
+    // Bullish OBs
+    ob_last = math.min(bull_ext_last - 1, array.size(bull_top) - 1)
+    if ob_last >= 0
+        for i = 0 to ob_last
+            t_v = array.get(bull_top, i)
+            b_v = array.get(bull_btm, i)
+            if low <= t_v and high >= b_v
+                bx = array.get(ob_box_bull, i)
+                if not na(bx)
+                    box.set_bgcolor(bx, ict_bull_valid_css)
+                ict_bull_retrace := true
+    // Bullish FVGs
+    fvg_sz = array.size(fvg_bull_tops)
+    if fvg_sz > 0
+        for i = 0 to fvg_sz - 1
+            t_v = array.get(fvg_bull_tops, i)
+            b_v = array.get(fvg_bull_btms, i)
+            if low <= t_v and high >= b_v
+                bx = array.get(fvg_bull_boxes, i)
+                if not na(bx)
+                    box.set_bgcolor(bx, ict_bull_valid_css)
+                ict_bull_retrace := true
+
+if ict_enable and ict_bear_state == 3
+    // Bearish OBs
+    ob_last = math.min(bear_ext_last - 1, array.size(bear_top) - 1)
+    if ob_last >= 0
+        for i = 0 to ob_last
+            t_v = array.get(bear_top, i)
+            b_v = array.get(bear_btm, i)
+            if low <= t_v and high >= b_v
+                bx = array.get(ob_box_bear, i)
+                if not na(bx)
+                    box.set_bgcolor(bx, ict_bear_valid_css)
+                ict_bear_retrace := true
+    // Bearish FVGs
+    fvg_sz = array.size(fvg_bear_tops)
+    if fvg_sz > 0
+        for i = 0 to fvg_sz - 1
+            t_v = array.get(fvg_bear_tops, i)
+            b_v = array.get(fvg_bear_btms, i)
+            if low <= t_v and high >= b_v
+                bx = array.get(fvg_bear_boxes, i)
+                if not na(bx)
+                    box.set_bgcolor(bx, ict_bear_valid_css)
+                ict_bear_retrace := true
+
+// ============================================================================
+// PLOTS — PREMIUM & DISCOUNT
+// ============================================================================
+
+// Invisible reference plots for data window awareness (no visual clutter)
+plot(show_pd ? pd_equil : na, 'Equilibrium (50%)', color.new(pd_eq_css, 0), 1,
+     plot.style_linebr, force_overlay = true, display = display.data_window)
+plot(show_pd ? pd_swing_high : na, 'Swing High (P&D)', color.new(#ef5350, 60), 1,
+     plot.style_linebr, force_overlay = true, display = display.data_window)
+plot(show_pd ? pd_swing_low : na, 'Swing Low (P&D)',  color.new(#26a69a, 60), 1,
+     plot.style_linebr, force_overlay = true, display = display.data_window)
+
+// ============================================================================
 // PLOTS — SESSIONS
 // ============================================================================
 
@@ -855,3 +1107,32 @@ if disp_bear
 
 alertcondition(disp_bull, 'Displacement (Bullish)', 'Strong bullish impulse candle detected')
 alertcondition(disp_bear, 'Displacement (Bearish)', 'Strong bearish impulse candle detected')
+
+// ============================================================================
+// SMART ALERTS — ICT ENTRY MODEL
+// ============================================================================
+
+if ict_enable and ict_alert_valid and barstate.isconfirmed
+    if ict_bull_retrace
+        alert(syminfo.ticker + ' — ICT Bullish Setup: price in valid OB/FVG @ ' + str.tostring(close, format.mintick) + '  (SSL swept → Disp → MSS → retrace)', alert.freq_once_per_bar_close)
+    if ict_bear_retrace
+        alert(syminfo.ticker + ' — ICT Bearish Setup: price in valid OB/FVG @ ' + str.tostring(close, format.mintick) + '  (BSL swept → Disp → MSS → retrace)', alert.freq_once_per_bar_close)
+
+alertcondition(ict_enable and ict_bull_retrace, 'ICT Valid Bullish Setup', 'Full ICT bullish sequence confirmed — price in OB/FVG')
+alertcondition(ict_enable and ict_bear_retrace, 'ICT Valid Bearish Setup', 'Full ICT bearish sequence confirmed — price in OB/FVG')
+
+// ============================================================================
+// SMART ALERTS — PREMIUM & DISCOUNT
+// ============================================================================
+
+// Detect first cross into each zone (confirmed bar)
+pd_cross_premium  = show_pd and pd_range_valid and barstate.isconfirmed and in_premium  and not in_premium[1]
+pd_cross_discount = show_pd and pd_range_valid and barstate.isconfirmed and in_discount and not in_discount[1]
+
+if pd_cross_premium
+    alert(syminfo.ticker + ' — Price entered Premium zone (above EQ ' + str.tostring(pd_equil, format.mintick) + ')', alert.freq_once_per_bar_close)
+if pd_cross_discount
+    alert(syminfo.ticker + ' — Price entered Discount zone (below EQ ' + str.tostring(pd_equil, format.mintick) + ')', alert.freq_once_per_bar_close)
+
+alertcondition(pd_cross_premium,  'Entered Premium Zone',  'Price crossed above equilibrium into Premium')
+alertcondition(pd_cross_discount, 'Entered Discount Zone', 'Price crossed below equilibrium into Discount')
