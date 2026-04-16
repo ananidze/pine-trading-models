@@ -1,0 +1,601 @@
+// This work is licensed under a Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0) https://creativecommons.org/licenses/by-nc-sa/4.0/
+//
+
+//@version=6
+indicator('Sessions + Order Blocks', 'Sessions + OB', overlay = true,
+     max_bars_back = 500, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500)
+
+// ============================================================================
+// INPUTS — SESSIONS
+// ============================================================================
+
+// Session A — New York
+show_sesa   = input.bool(true,               '',          inline = 'sesa',          group = 'Session A')
+sesa_txt    = input.string('New York',       '',          inline = 'sesa',          group = 'Session A')
+sesa_ses    = input.session('1300-2200',     '',          inline = 'sesa',          group = 'Session A', tooltip = 'Session window in HHMM-HHMM format. Interpreted in the timezone set below.')
+sesa_css    = input.color(#ff6b35,           '',          inline = 'sesa',          group = 'Session A')
+sesa_range  = input.bool(true,  'Range',                  inline = 'sesa_overlays', group = 'Session A')
+sesa_tl     = input.bool(false, 'Trendline',              inline = 'sesa_overlays', group = 'Session A')
+sesa_avg    = input.bool(false, 'Mean',                   inline = 'sesa_overlays', group = 'Session A')
+sesa_vwap   = input.bool(false, 'VWAP',                   inline = 'sesa_overlays', group = 'Session A')
+sesa_maxmin = input.bool(false, 'Max/Min',                inline = 'sesa_overlays', group = 'Session A')
+
+// Session B — London
+show_sesb   = input.bool(true,               '',          inline = 'sesb',          group = 'Session B')
+sesb_txt    = input.string('London',         '',          inline = 'sesb',          group = 'Session B')
+sesb_ses    = input.session('0700-1600',     '',          inline = 'sesb',          group = 'Session B', tooltip = 'Session window in HHMM-HHMM format. Interpreted in the timezone set below.')
+sesb_css    = input.color(#3d7aed,           '',          inline = 'sesb',          group = 'Session B')
+sesb_range  = input.bool(true,  'Range',                  inline = 'sesb_overlays', group = 'Session B')
+sesb_tl     = input.bool(false, 'Trendline',              inline = 'sesb_overlays', group = 'Session B')
+sesb_avg    = input.bool(false, 'Mean',                   inline = 'sesb_overlays', group = 'Session B')
+sesb_vwap   = input.bool(false, 'VWAP',                   inline = 'sesb_overlays', group = 'Session B')
+sesb_maxmin = input.bool(false, 'Max/Min',                inline = 'sesb_overlays', group = 'Session B')
+
+// Session C — Tokyo
+show_sesc   = input.bool(true,               '',          inline = 'sesc',          group = 'Session C')
+sesc_txt    = input.string('Tokyo',          '',          inline = 'sesc',          group = 'Session C')
+sesc_ses    = input.session('0000-0900',     '',          inline = 'sesc',          group = 'Session C', tooltip = 'Session window in HHMM-HHMM format. Interpreted in the timezone set below.')
+sesc_css    = input.color(#e91e8c,           '',          inline = 'sesc',          group = 'Session C')
+sesc_range  = input.bool(true,  'Range',                  inline = 'sesc_overlays', group = 'Session C')
+sesc_tl     = input.bool(false, 'Trendline',              inline = 'sesc_overlays', group = 'Session C')
+sesc_avg    = input.bool(false, 'Mean',                   inline = 'sesc_overlays', group = 'Session C')
+sesc_vwap   = input.bool(false, 'VWAP',                   inline = 'sesc_overlays', group = 'Session C')
+sesc_maxmin = input.bool(false, 'Max/Min',                inline = 'sesc_overlays', group = 'Session C')
+
+// Session D — Sydney
+show_sesd   = input.bool(true,               '',          inline = 'sesd',          group = 'Session D')
+sesd_txt    = input.string('Sydney',         '',          inline = 'sesd',          group = 'Session D')
+sesd_ses    = input.session('2100-0600',     '',          inline = 'sesd',          group = 'Session D', tooltip = 'Session window in HHMM-HHMM format. Interpreted in the timezone set below.')
+sesd_css    = input.color(#f0c040,           '',          inline = 'sesd',          group = 'Session D')
+sesd_range  = input.bool(true,  'Range',                  inline = 'sesd_overlays', group = 'Session D')
+sesd_tl     = input.bool(false, 'Trendline',              inline = 'sesd_overlays', group = 'Session D')
+sesd_avg    = input.bool(false, 'Mean',                   inline = 'sesd_overlays', group = 'Session D')
+sesd_vwap   = input.bool(false, 'VWAP',                   inline = 'sesd_overlays', group = 'Session D')
+sesd_maxmin = input.bool(false, 'Max/Min',                inline = 'sesd_overlays', group = 'Session D')
+
+// Timezone
+tz_incr      = input.int(0,    'UTC (+/-)',              group = 'Timezone', minval = -12, maxval = 14, tooltip = 'UTC offset in whole hours. Ignored when Use Exchange Timezone is enabled.')
+use_exchange = input.bool(false, 'Use Exchange Timezone', group = 'Timezone', tooltip = 'When enabled, session windows are interpreted in the instrument\'s exchange timezone, overriding the UTC offset.')
+
+// Range Style
+bg_transp    = input.int(88,   'Range Fill Opacity',  group = 'Range Style', minval = 0, maxval = 100, tooltip = 'Transparency of the session range fill. 0 = fully opaque, 100 = invisible.')
+show_outline = input.bool(true,  'Range Border',       group = 'Range Style', tooltip = 'Show a dotted border around each session range box.')
+show_txt     = input.bool(true,  'Session Label',      group = 'Range Style', tooltip = 'Display the session name at the top-left of its range box.')
+
+// Dashboard
+show_dash     = input.bool(false, 'Show Dashboard',     group = 'Dashboard', tooltip = 'Show a summary table with active/inactive status for each session.')
+advanced_dash = input.bool(false, 'Advanced Dashboard', group = 'Dashboard', tooltip = 'Extend the table with trend direction (R²), session volume, and price standard deviation columns.')
+dash_loc      = input.string('Top Right', 'Location',
+     options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'Dashboard')
+text_size     = input.string('Small', 'Size',
+     options = ['Tiny', 'Small', 'Normal'], group = 'Dashboard')
+
+// Dividers
+show_ses_div = input.bool(false, 'Session Divider', group = 'Dividers', tooltip = 'Plot a tick marker along the chart bottom for every bar inside an active session.')
+show_day_div = input.bool(true,  'Daily Divider',   group = 'Dividers', tooltip = 'Draw a dashed vertical line and day-of-week label at each daily boundary.')
+
+// ============================================================================
+// INPUTS — ORDER BLOCKS
+// ============================================================================
+
+length        = input.int(5,   'Pivot Length',       minval = 1, maxval = 50,  group = 'OB Detection', tooltip = 'Bars on each side required to confirm a volume pivot high. Larger values produce fewer but more significant order blocks.')
+mitigation    = input.string('Wick', 'Mitigation',   options = ['Wick', 'Close'], group = 'OB Detection', tooltip = 'Wick: OB is invalidated when price wicks through its boundary.\nClose: OB is invalidated only when price closes beyond its boundary.')
+
+bull_ext_last = input.int(3,   'Max Bullish OBs',   minval = 1, maxval = 10,  group = 'Bullish OB', tooltip = 'Maximum number of unmitigated bullish order blocks shown at once.')
+bg_bull_css   = input.color(color.new(#1a9e00, 82), 'Fill',   inline = 'bull', group = 'Bullish OB')
+bull_css      = input.color(#1a9e00, 'Border',                 inline = 'bull', group = 'Bullish OB')
+bull_avg_css  = input.color(color.new(#9598a1, 40), 'Mid Line', inline = 'bull', group = 'Bullish OB')
+
+bear_ext_last = input.int(3,   'Max Bearish OBs',   minval = 1, maxval = 10,  group = 'Bearish OB', tooltip = 'Maximum number of unmitigated bearish order blocks shown at once.')
+bg_bear_css   = input.color(color.new(#e01000, 82), 'Fill',   inline = 'bear', group = 'Bearish OB')
+bear_css      = input.color(#e01000, 'Border',                 inline = 'bear', group = 'Bearish OB')
+bear_avg_css  = input.color(color.new(#9598a1, 40), 'Mid Line', inline = 'bear', group = 'Bearish OB')
+
+line_style    = input.string('⎯⎯⎯', 'Mid Line Style', options = ['⎯⎯⎯', '----', '····'], group = 'OB Style')
+line_width    = input.int(1,   'Mid Line Width',      minval = 1, maxval = 4,   group = 'OB Style')
+show_labels   = input.bool(true, 'Show Labels',                                  group = 'OB Style', tooltip = 'Display "Bull OB" / "Bear OB" text at the left edge of each order block.')
+label_size    = input.string(size.small, 'Label Size',
+     options = [size.tiny, size.small, size.normal, size.large], group = 'OB Style')
+
+// ============================================================================
+// FUNCTIONS — SESSIONS
+// ============================================================================
+
+n = bar_index
+
+// Cumulative mean price over an active session
+get_avg(session) =>
+    var int   len  = 1
+    var float csma = na
+    var float sma  = na
+
+    if session > session[1]
+        len  := 1
+        csma := close
+    else if bool(session) and session == session[1]
+        len  += 1
+        csma += close
+        sma  := csma / len
+
+    sma
+
+// Linear regression — returns [start_y, end_y, std_dev, r²]
+get_linreg(session) =>
+    var int   len   = 1
+    var float cwma  = na
+    var float csma  = na
+    var float csma2 = na
+    var float y1    = na
+    var float y2    = na
+    var float stdev = na
+    var float r2    = na
+
+    if session > session[1]
+        len   := 1
+        cwma  := close
+        csma  := close
+        csma2 := close * close
+    else if bool(session) and session == session[1]
+        len   += 1
+        csma  += close
+        csma2 += close * close
+        cwma  += close * len
+
+        float sma = csma / len
+        float wma = cwma / (len * (len + 1) / 2)
+        float cov = (wma - sma) * (len + 1) / 2
+
+        stdev := math.sqrt(csma2 / len - sma * sma)
+        r2    := cov / (stdev * (math.sqrt(len * len - 1) / (2 * math.sqrt(3))))
+        y1    := 4 * sma - 3 * wma
+        y2    := 3 * wma - 2 * sma
+
+    [y1, y2, stdev, r2]
+
+// VWAP numerator/denominator accumulated over an active session
+get_vwap(session) =>
+    var float num = na
+    var float den = na
+
+    if session > session[1]
+        num := close * volume
+        den := volume
+    else if bool(session) and session == session[1]
+        num += close * volume
+        den += volume
+    else
+        num := na
+
+    [num, den]
+
+// Draw or update a session trendline / mean line
+set_line(session, y1, y2, session_css) =>
+    var line tl = na
+
+    if session > session[1]
+        tl := line.new(n, close, n, close, color = session_css)
+    if bool(session) and session == session[1]
+        line.set_y1(tl, y1)
+        line.set_xy2(tl, n, y2)
+
+// Draw or update the session range box with a clean top-left label
+get_range(session, session_name, session_css) =>
+    var int   t   = 0
+    var float bx_max = high
+    var float bx_min = low
+    var box   bx  = na
+    var label lbl = na
+
+    if session > session[1]
+        t      := time
+        bx_max := high
+        bx_min := low
+
+        bx := box.new(n, bx_max, n, bx_min,
+             bgcolor      = color.new(session_css, bg_transp),
+             border_color = show_outline ? color.new(session_css, 60) : na,
+             border_style = line.style_dotted,
+             border_width = 1)
+
+        if show_txt
+            lbl := label.new(t, bx_max, session_name,
+                 xloc      = xloc.bar_time,
+                 textcolor = color.new(session_css, 10),
+                 style     = label.style_label_down,
+                 color     = color.new(color.white, 100),
+                 size      = size.tiny)
+
+    if bool(session) and session == session[1]
+        bx_max := math.max(high, bx_max)
+        bx_min := math.min(low,  bx_min)
+        box.set_top(bx, bx_max)
+        box.set_rightbottom(bx, n, bx_min)
+        if show_txt
+            label.set_xy(lbl, int(math.avg(t, time)), bx_max)
+
+    [bool(session) ? na : bx_max, bool(session) ? na : bx_min]
+
+// ============================================================================
+// FUNCTIONS — ORDER BLOCKS
+// ============================================================================
+
+line_style_from(style) =>
+    switch style
+        '⎯⎯⎯' => line.style_solid
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+
+// Accumulate OB coordinates into arrays when condition fires
+get_coordinates(condition, top, btm, ob_val) =>
+    var ob_top  = array.new_float(0)
+    var ob_btm  = array.new_float(0)
+    var ob_avg  = array.new_float(0)
+    var ob_left = array.new_int(0)
+    float ob    = na
+
+    if condition
+        array.unshift(ob_top,  top)
+        array.unshift(ob_btm,  btm)
+        array.unshift(ob_avg,  math.avg(top, btm))
+        array.unshift(ob_left, time[length])
+        ob := ob_val
+
+    [ob_top, ob_btm, ob_avg, ob_left, ob]
+
+// Remove mitigated OBs; iterate in reverse to avoid index-shift bugs
+remove_mitigated(ob_top, ob_btm, ob_left, ob_avg, target, bull) =>
+    mitigated  = false
+    target_arr = bull ? ob_btm : ob_top
+    i          = array.size(target_arr) - 1
+
+    while i >= 0
+        breached = bull ? target < array.get(target_arr, i) : target > array.get(target_arr, i)
+        if breached
+            array.remove(ob_top,  i)
+            array.remove(ob_btm,  i)
+            array.remove(ob_avg,  i)
+            array.remove(ob_left, i)
+            mitigated := true
+        i -= 1
+
+    mitigated
+
+// Pre-allocate drawing objects on bar 0; reposition on last bar
+set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ext_last, bg_css, border_css, lvl_css, bull) =>
+    var ob_box = array.new_box(0)
+    var ob_lvl = array.new_line(0)
+    var ob_lbl = array.new_label(0)
+
+    if barstate.isfirst
+        for i = 0 to ext_last - 1
+            array.unshift(ob_box, box.new(na, na, na, na,
+                 xloc         = xloc.bar_time,
+                 extend       = extend.right,
+                 bgcolor      = bg_css,
+                 border_color = color.new(border_css, 55)))
+            array.unshift(ob_lvl, line.new(na, na, na, na,
+                 xloc   = xloc.bar_time,
+                 extend = extend.right,
+                 color  = lvl_css,
+                 style  = line_style_from(line_style),
+                 width  = line_width))
+            array.unshift(ob_lbl, label.new(na, na, '',
+                 xloc      = xloc.bar_time,
+                 style     = label.style_label_right,
+                 color     = color.new(color.black, 100),
+                 textcolor = color.new(border_css, 20),
+                 size      = label_size))
+
+    if barstate.islast
+        last = math.min(ext_last - 1, array.size(ob_top) - 1)
+
+        // Hide slots that have no active OB data
+        if last < ext_last - 1
+            for i = last + 1 to ext_last - 1
+                lbl = array.get(ob_lbl, i)
+                label.set_style(lbl, label.style_none)
+                label.set_text(lbl, '')
+
+        if last >= 0
+            for i = 0 to last
+                bx    = array.get(ob_box,  i)
+                lv    = array.get(ob_lvl,  i)
+                lbl   = array.get(ob_lbl,  i)
+                top_v = array.get(ob_top,  i)
+                btm_v = array.get(ob_btm,  i)
+                avg_v = array.get(ob_avg,  i)
+                lft   = array.get(ob_left, i)
+
+                box.set_lefttop(bx,     lft, top_v)
+                box.set_rightbottom(bx, lft, btm_v)
+                line.set_xy1(lv, lft,     avg_v)
+                line.set_xy2(lv, lft + 1, avg_v)
+
+                if show_labels
+                    txt = bull ? 'Bull OB' : 'Bear OB'
+                    label.set_xy(lbl, lft, avg_v)
+                    label.set_text(lbl, txt)
+                    label.set_style(lbl, label.style_label_right)
+                    label.set_textcolor(lbl, color.new(border_css, 20))
+                    label.set_size(lbl, label_size)
+
+// ============================================================================
+// SESSION DETECTION
+// ============================================================================
+
+var string tz = use_exchange ? syminfo.timezone : str.format('UTC{0}{1}', tz_incr >= 0 ? '+' : '-', math.abs(tz_incr))
+
+is_sesa = math.sign(nz(time(timeframe.period, sesa_ses, tz)))
+is_sesb = math.sign(nz(time(timeframe.period, sesb_ses, tz)))
+is_sesc = math.sign(nz(time(timeframe.period, sesc_ses, tz)))
+is_sesd = math.sign(nz(time(timeframe.period, sesd_ses, tz)))
+
+// Cache active-state booleans (used in dashboard + plotshape)
+sesa_on = bool(is_sesa)
+sesb_on = bool(is_sesb)
+sesc_on = bool(is_sesc)
+sesd_on = bool(is_sesd)
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+
+var table_position = dash_loc == 'Bottom Left' ? position.bottom_left : dash_loc == 'Top Right' ? position.top_right : position.bottom_right
+var table_size     = text_size == 'Tiny' ? size.tiny : text_size == 'Normal' ? size.normal : size.small
+
+// Cached dashboard colors
+var color C_TXT      = color.new(color.white, 10)
+var color C_HDR      = color.new(color.white, 30)
+var color C_ACTIVE   = color.new(#089981, 20)
+var color C_INACTIVE = color.new(#f23645, 20)
+
+var tb = table.new(table_position, 5, 6,
+     bgcolor = color.new(#1a1e2e, 5))
+
+if barstate.isfirst and show_dash
+    table.cell(tb, 0, 0, 'Sessions + OB', text_color = C_HDR, text_size = table_size)
+    table.merge_cells(tb, 0, 0, 4, 0)
+
+    table.cell(tb, 0, 2, sesa_txt, text_color = sesa_css, text_size = table_size)
+    table.cell(tb, 0, 3, sesb_txt, text_color = sesb_css, text_size = table_size)
+    table.cell(tb, 0, 4, sesc_txt, text_color = sesc_css, text_size = table_size)
+    table.cell(tb, 0, 5, sesd_txt, text_color = sesd_css, text_size = table_size)
+
+    if advanced_dash
+        table.cell(tb, 0, 1, 'Session', text_color = C_HDR, text_size = table_size)
+        table.cell(tb, 1, 1, 'Status',  text_color = C_HDR, text_size = table_size)
+        table.cell(tb, 2, 1, 'Trend',   text_color = C_HDR, text_size = table_size)
+        table.cell(tb, 3, 1, 'Volume',  text_color = C_HDR, text_size = table_size)
+        table.cell(tb, 4, 1, 'σ',       text_color = C_HDR, text_size = table_size)
+
+if barstate.islast and show_dash
+    table.cell(tb, 1, 2, sesa_on ? 'Active' : 'Inactive', bgcolor = sesa_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+    table.cell(tb, 1, 3, sesb_on ? 'Active' : 'Inactive', bgcolor = sesb_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+    table.cell(tb, 1, 4, sesc_on ? 'Active' : 'Inactive', bgcolor = sesc_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+    table.cell(tb, 1, 5, sesd_on ? 'Active' : 'Inactive', bgcolor = sesd_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+
+// ============================================================================
+// SESSION OVERLAYS
+// ============================================================================
+
+var float max_sesa = na
+var float min_sesa = na
+var float max_sesb = na
+var float min_sesb = na
+var float max_sesc = na
+var float min_sesc = na
+var float max_sesd = na
+var float min_sesd = na
+
+// Ranges
+if show_sesa and sesa_range
+    [max, min] = get_range(is_sesa, sesa_txt, sesa_css)
+    max_sesa  := max
+    min_sesa  := min
+
+if show_sesb and sesb_range
+    [max, min] = get_range(is_sesb, sesb_txt, sesb_css)
+    max_sesb  := max
+    min_sesb  := min
+
+if show_sesc and sesc_range
+    [max, min] = get_range(is_sesc, sesc_txt, sesc_css)
+    max_sesc  := max
+    min_sesc  := min
+
+if show_sesd and sesd_range
+    [max, min] = get_range(is_sesd, sesd_txt, sesd_css)
+    max_sesd  := max
+    min_sesd  := min
+
+// Trendlines
+if show_sesa and (sesa_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesa)
+    if advanced_dash
+        table.cell(tb, 2, 2, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+        table.cell(tb, 4, 2, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
+    if sesa_tl
+        set_line(is_sesa, y1, y2, sesa_css)
+
+if show_sesb and (sesb_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesb)
+    if advanced_dash
+        table.cell(tb, 2, 3, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+        table.cell(tb, 4, 3, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
+    if sesb_tl
+        set_line(is_sesb, y1, y2, sesb_css)
+
+if show_sesc and (sesc_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesc)
+    if advanced_dash
+        table.cell(tb, 2, 4, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+        table.cell(tb, 4, 4, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
+    if sesc_tl
+        set_line(is_sesc, y1, y2, sesc_css)
+
+if show_sesd and (sesd_tl or advanced_dash)
+    [y1, y2, stdev, r2] = get_linreg(is_sesd)
+    if advanced_dash
+        table.cell(tb, 2, 5, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
+        table.cell(tb, 4, 5, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
+    if sesd_tl
+        set_line(is_sesd, y1, y2, sesd_css)
+
+// Mean Lines
+if show_sesa and sesa_avg
+    avg = get_avg(is_sesa)
+    set_line(is_sesa, avg, avg, sesa_css)
+
+if show_sesb and sesb_avg
+    avg = get_avg(is_sesb)
+    set_line(is_sesb, avg, avg, sesb_css)
+
+if show_sesc and sesc_avg
+    avg = get_avg(is_sesc)
+    set_line(is_sesc, avg, avg, sesc_css)
+
+if show_sesd and sesd_avg
+    avg = get_avg(is_sesd)
+    set_line(is_sesd, avg, avg, sesd_css)
+
+// VWAP
+var float vwap_a = na
+var float vwap_b = na
+var float vwap_c = na
+var float vwap_d = na
+
+if show_sesa and (sesa_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesa)
+    if sesa_vwap
+        vwap_a := num / den
+    if advanced_dash
+        table.cell(tb, 3, 2, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+
+if show_sesb and (sesb_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesb)
+    if sesb_vwap
+        vwap_b := num / den
+    if advanced_dash
+        table.cell(tb, 3, 3, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+
+if show_sesc and (sesc_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesc)
+    if sesc_vwap
+        vwap_c := num / den
+    if advanced_dash
+        table.cell(tb, 3, 4, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+
+if show_sesd and (sesd_vwap or advanced_dash)
+    [num, den] = get_vwap(is_sesd)
+    if sesd_vwap
+        vwap_d := num / den
+    if advanced_dash
+        table.cell(tb, 3, 5, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+
+// ============================================================================
+// ORDER BLOCK CALCULATIONS
+// ============================================================================
+
+var os          = 0
+var target_bull = 0.
+var target_bear = 0.
+
+upper = ta.highest(length)
+lower = ta.lowest(length)
+
+os := high[length] > upper ? 0 : low[length] < lower ? 1 : os[1]
+
+if mitigation == 'Close'
+    target_bull := ta.lowest(close, length)
+    target_bear := ta.highest(close, length)
+else
+    target_bull := lower
+    target_bear := upper
+
+phv = ta.pivothigh(volume, length, length)
+
+// ============================================================================
+// ORDER BLOCKS
+// ============================================================================
+
+[bull_top, bull_btm, bull_avg, bull_left, bull_ob] = get_coordinates(bool(phv) and os == 1, hl2[length], low[length],  low[length])
+[bear_top, bear_btm, bear_avg, bear_left, bear_ob] = get_coordinates(bool(phv) and os == 0, high[length], hl2[length], high[length])
+
+mitigated_bull = remove_mitigated(bull_top, bull_btm, bull_left, bull_avg, target_bull, true)
+mitigated_bear = remove_mitigated(bear_top, bear_btm, bear_left, bear_avg, target_bear, false)
+
+set_order_blocks(bull_top, bull_btm, bull_left, bull_avg, bull_ext_last, bg_bull_css, bull_css, bull_avg_css, true)
+set_order_blocks(bear_top, bear_btm, bear_left, bear_avg, bear_ext_last, bg_bear_css, bear_css, bear_avg_css, false)
+
+// ============================================================================
+// PLOTS — SESSIONS
+// ============================================================================
+
+// Session max/min lines (historic, no repainting)
+plot(sesa_maxmin ? max_sesa : na, 'Session A High', sesa_css, 1, plot.style_linebr, force_overlay = true)
+plot(sesa_maxmin ? min_sesa : na, 'Session A Low',  sesa_css, 1, plot.style_linebr, force_overlay = true)
+
+plot(sesb_maxmin ? max_sesb : na, 'Session B High', sesb_css, 1, plot.style_linebr, force_overlay = true)
+plot(sesb_maxmin ? min_sesb : na, 'Session B Low',  sesb_css, 1, plot.style_linebr, force_overlay = true)
+
+plot(sesc_maxmin ? max_sesc : na, 'Session C High', sesc_css, 1, plot.style_linebr, force_overlay = true)
+plot(sesc_maxmin ? min_sesc : na, 'Session C Low',  sesc_css, 1, plot.style_linebr, force_overlay = true)
+
+plot(sesd_maxmin ? max_sesd : na, 'Session D High', sesd_css, 1, plot.style_linebr, force_overlay = true)
+plot(sesd_maxmin ? min_sesd : na, 'Session D Low',  sesd_css, 1, plot.style_linebr, force_overlay = true)
+
+// Session VWAP lines
+plot(vwap_a, 'Session A VWAP', color.new(sesa_css, 30), 1, plot.style_linebr, force_overlay = true)
+plot(vwap_b, 'Session B VWAP', color.new(sesb_css, 30), 1, plot.style_linebr, force_overlay = true)
+plot(vwap_c, 'Session C VWAP', color.new(sesc_css, 30), 1, plot.style_linebr, force_overlay = true)
+plot(vwap_d, 'Session D VWAP', color.new(sesd_css, 30), 1, plot.style_linebr, force_overlay = true)
+
+// Session dividers
+plotshape(sesa_on and show_ses_div and show_sesa,               '·',   shape.square,  location.bottom, na, text = '.',  textcolor = sesa_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(is_sesa != is_sesa[1] and show_ses_div and show_sesa, 'NYE', shape.labelup, location.bottom, na, text = '❚', textcolor = sesa_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+
+plotshape(sesb_on and show_ses_div and show_sesb,               '·',   shape.labelup, location.bottom, na, text = '.',  textcolor = sesb_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(is_sesb != is_sesb[1] and show_ses_div and show_sesb, 'LDN', shape.labelup, location.bottom, na, text = '❚', textcolor = sesb_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+
+plotshape(sesc_on and show_ses_div and show_sesc,               '·',   shape.square,  location.bottom, na, text = '.',  textcolor = sesc_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(is_sesc != is_sesc[1] and show_ses_div and show_sesc, 'TYO', shape.labelup, location.bottom, na, text = '❚', textcolor = sesc_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+
+plotshape(sesd_on and show_ses_div and show_sesd,               '·',   shape.labelup, location.bottom, na, text = '.',  textcolor = sesd_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(is_sesd != is_sesd[1] and show_ses_div and show_sesd, 'SYD', shape.labelup, location.bottom, na, text = '❚', textcolor = sesd_css, size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+
+// ============================================================================
+// DAILY DIVIDERS
+// ============================================================================
+
+day        = dayofweek
+day_change = show_day_div and day != day[1]
+
+if day_change
+    line.new(n, close + syminfo.mintick, n, close - syminfo.mintick,
+         color  = color.new(color.gray, 40),
+         extend = extend.both,
+         style  = line.style_dashed)
+
+plotshape(day_change and day == 1, 'Sunday',    shape.labeldown, location.top, na, text = 'Sun', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(day_change and day == 2, 'Monday',    shape.labeldown, location.top, na, text = 'Mon', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(day_change and day == 3, 'Tuesday',   shape.labeldown, location.top, na, text = 'Tue', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(day_change and day == 4, 'Wednesday', shape.labeldown, location.top, na, text = 'Wed', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(day_change and day == 5, 'Thursday',  shape.labeldown, location.top, na, text = 'Thu', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(day_change and day == 6, 'Friday',    shape.labeldown, location.top, na, text = 'Fri', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+plotshape(day_change and day == 7, 'Saturday',  shape.labeldown, location.top, na, text = 'Sat', textcolor = color.new(color.gray, 30), size = size.tiny, display = display.all - display.status_line, editable = false, force_overlay = true)
+
+// ============================================================================
+// PLOTS — ORDER BLOCKS
+// ============================================================================
+
+plot(bull_ob, 'Bull OB', bull_css, 2, plot.style_linebr, offset = -length, display = display.none, force_overlay = true)
+plot(bear_ob, 'Bear OB', bear_css, 2, plot.style_linebr, offset = -length, display = display.none, force_overlay = true)
+
+// ============================================================================
+// ALERTS — ORDER BLOCKS
+// ============================================================================
+
+alertcondition(bool(bull_ob),        'Bullish OB Formed',    'Bullish order block detected')
+alertcondition(bool(bear_ob),        'Bearish OB Formed',    'Bearish order block detected')
+alertcondition(bool(mitigated_bull), 'Bullish OB Mitigated', 'Bullish order block mitigated')
+alertcondition(bool(mitigated_bear), 'Bearish OB Mitigated', 'Bearish order block mitigated')

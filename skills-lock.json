@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "pine-developer": {
+      "source": "traderspost/pinescript-agents",
+      "sourceType": "github",
+      "computedHash": "ab06abab1c06c473285ac40e4c6e06e3cdf5cef24e71b47979cc6c9712a5ea8b"
+    },
+    "pine-optimizer": {
+      "source": "traderspost/pinescript-agents",
+      "sourceType": "github",
+      "computedHash": "89b39809a432051d7678c98f3f2835c0b9006f5dab6f24b724585854460b9e52"
+    }
+  }
+}

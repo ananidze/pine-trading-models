@@ -1,0 +1,571 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+// © LM Pro
+
+//@version=6
+indicator('Liquidity Model [Prop Firm]', shorttitle='LM Pro', overlay=true,
+     max_lines_count=500, max_boxes_count=500, max_labels_count=500)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+
+// ─── Trend Bias ─────────────────────────────────────────────────────────────
+grpBias      = "Trend Bias"
+i_htfTF      = input.timeframe("D", "Timeframe", group=grpBias,
+     tooltip="Higher timeframe for directional filter.\nOnly longs above MA, shorts below.")
+i_htfMAType  = input.string("EMA", "MA Type", options=["EMA", "SMA"], group=grpBias)
+i_htfMALen   = input.int(50, "MA Length", minval=5, maxval=200, group=grpBias,
+     tooltip="MA period on the higher timeframe.\n50 = standard, lower = reactive, higher = smooth.")
+
+// ─── Sessions ───────────────────────────────────────────────────────────────
+grpKZ        = "Sessions"
+i_kzLondon   = input.bool(true, "London  (08:00 – 12:00)", group=grpKZ,
+     tooltip="High liquidity — frequent sweeps and reversals.")
+i_kzNY       = input.bool(true, "New York  (13:00 – 17:00)", group=grpKZ,
+     tooltip="High volatility — strongest displacements.")
+i_kzAsia     = input.bool(false, "Asia  (00:00 – 04:00)", group=grpKZ,
+     tooltip="Lower volatility — enable for 24h instruments like crypto.")
+i_kzTZ       = input.string("UTC", "Timezone", group=grpKZ,
+     options=["UTC", "America/New_York", "Europe/London", "Asia/Tokyo"],
+     tooltip="Match to your chart timezone for accurate session shading.")
+
+// ─── Structure ──────────────────────────────────────────────────────────────
+grpStruct    = "Structure"
+i_pivotLen   = input.int(14, "Pivot Lookback", minval=2, maxval=50, group=grpStruct,
+     tooltip="Bars left & right for swing detection.\nHigher = fewer, stronger zones.")
+i_swingArea  = input.string("Wick Extremity", "Zone Boundary",
+     options=["Wick Extremity", "Full Range"], group=grpStruct,
+     tooltip="Wick Extremity = body-to-wick (tighter).\nFull Range = entire candle (wider).")
+
+// ─── Liquidity ──────────────────────────────────────────────────────────────
+grpPool      = "Liquidity"
+i_minContacts = input.int(2, "Min Touches", minval=1, maxval=10, group=grpPool,
+     tooltip="Touches needed to confirm a zone.\nMore = stronger liquidity, fewer signals.")
+i_gapBars    = input.int(5, "Touch Spacing (bars)", minval=0, maxval=20, group=grpPool,
+     tooltip="Minimum bars between touches.\nPrevents counting consecutive bars as separate contacts.")
+i_confirmBars = input.int(10, "Confirmation Age", minval=1, maxval=50, group=grpPool,
+     tooltip="Minimum age before a zone is tradeable.\nFilters premature sweeps.")
+i_maxPoolAge = input.int(500, "Max Zone Age", minval=50, maxval=2000, group=grpPool,
+     tooltip="Expire zones older than this.\nLower for intraday, higher for swing.")
+
+// ─── Entry Logic ────────────────────────────────────────────────────────────
+grpEntry     = "Entry Logic"
+i_sweepMode  = input.string("Wicks Only", "Sweep Mode",
+     options=["Wicks Only", "Break + Retest", "Both"], group=grpEntry,
+     tooltip="Wicks Only = poke & close back (safest).\nBreak + Retest = close beyond, then reclaim.\nBoth = either qualifies.")
+i_reqDisp    = input.bool(true, "Require Displacement", group=grpEntry,
+     tooltip="Strong momentum candle after the sweep.\nDisabling = earlier entries, lower quality.")
+i_dispATR    = input.float(0.5, "Displacement × ATR", minval=0.1, maxval=2.0,
+     step=0.1, group=grpEntry,
+     tooltip="Minimum body size as ATR multiple.\nHigher = only strong displacements qualify.")
+i_dispWindow = input.int(3, "Displacement Window", minval=1, maxval=10, group=grpEntry,
+     tooltip="Bars after sweep to look for displacement.")
+i_minRR      = input.float(2.0, "Min R:R", minval=1.0, maxval=5.0,
+     step=0.5, group=grpEntry,
+     tooltip="Minimum risk-to-reward ratio.\nProp standard: 2.0+")
+
+// ─── Risk ───────────────────────────────────────────────────────────────────
+grpRisk      = "Risk"
+i_maxTrades  = input.int(2, "Max Signals / Day", minval=1, maxval=10, group=grpRisk,
+     tooltip="Daily signal cap — prevents overtrading.")
+i_slBuffer   = input.float(2.0, "SL Buffer (ticks)", minval=0, maxval=50,
+     step=1.0, group=grpRisk,
+     tooltip="Extra ticks beyond zone edge for stop placement.")
+
+// ─── Visuals ────────────────────────────────────────────────────────────────
+grpVis       = "Visuals"
+i_showSLTP   = input.bool(true, "Show SL / TP Levels", group=grpVis)
+i_showBiasBg = input.bool(true, "Show Bias Background", group=grpVis)
+i_showKZBg   = input.bool(true, "Show Session Highlight", group=grpVis)
+i_showDash   = input.bool(true, "Show Dashboard", group=grpVis)
+i_dashPos    = input.string("Top Right", "Dashboard Position", group=grpVis,
+     options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"])
+i_lblSize    = input.string("Small", "Label Size",
+     options=["Tiny", "Small", "Normal"], group=grpVis)
+
+// ─── Theme ──────────────────────────────────────────────────────────────────
+grpTheme     = "Theme"
+i_bullColor  = input.color(#2962ff, "Bullish", group=grpTheme)
+i_bearColor  = input.color(#f23645, "Bearish", group=grpTheme)
+i_neutColor  = input.color(#787b86, "Neutral", group=grpTheme)
+
+// ============================================================================
+// USER-DEFINED TYPES
+// ============================================================================
+
+type LiqPool
+    float top
+    float btm
+    int   x1
+    int   dir
+    int   contacts
+    int   lastContactBar
+    bool  confirmed
+    bool  swept
+    int   sweepBar
+    float vol
+    box   bx
+    label lab
+
+// ============================================================================
+// CONSTANTS & HELPERS
+// ============================================================================
+
+n = bar_index
+
+lblSz = switch i_lblSize
+    "Tiny"  => size.tiny
+    "Small" => size.small
+    =>         size.normal
+
+dashPos = switch i_dashPos
+    "Top Right"    => position.top_right
+    "Top Left"     => position.top_left
+    "Bottom Right" => position.bottom_right
+    =>                position.bottom_left
+
+// Derived colors
+color BULL       = i_bullColor
+color BEAR       = i_bearColor
+color NEUT       = i_neutColor
+color BULL_A80   = color.new(BULL, 80)
+color BEAR_A80   = color.new(BEAR, 80)
+color BULL_A90   = color.new(BULL, 90)
+color BEAR_A90   = color.new(BEAR, 90)
+color BULL_A50   = color.new(BULL, 50)
+color BEAR_A50   = color.new(BEAR, 50)
+color BULL_A96   = color.new(BULL, 96)
+color BEAR_A96   = color.new(BEAR, 96)
+color ACCENT     = #ff9800
+color ACCENT_A96 = color.new(ACCENT, 96)
+color TBL_BG     = color.new(#141823, 0)
+color TBL_FRAME  = color.new(#2a2e39, 0)
+color TBL_HEAD   = color.new(#1e222d, 0)
+color TXT_DIM    = color.new(#787b86, 0)
+color TXT_LIGHT  = color.new(#d1d4dc, 0)
+color TXT_WHITE  = color.new(#f0f0f0, 0)
+color TRANSPARENT = color.new(na, 100)
+
+atrVal      = ta.atr(14)
+slBuf       = i_slBuffer * syminfo.mintick
+bodyTop     = math.max(open, close)
+bodyBot     = math.min(open, close)
+bodyAbs     = math.abs(close - open)
+isConfirmed = barstate.isconfirmed
+
+// ============================================================================
+// TREND BIAS ENGINE
+// ============================================================================
+
+htfExpr = i_htfMAType == "EMA" ? ta.ema(close, i_htfMALen) : ta.sma(close, i_htfMALen)
+[htfC, htfM] = request.security(syminfo.tickerid, i_htfTF, [close, htfExpr],
+     lookahead=barmerge.lookahead_off)
+
+htfBull = not na(htfC) and not na(htfM) and htfC > htfM
+htfBear = not na(htfC) and not na(htfM) and htfC < htfM
+
+// ============================================================================
+// SESSION DETECTION
+// ============================================================================
+
+kzH = hour(time, i_kzTZ)
+
+isLondon  = kzH >= 8  and kzH < 12
+isNY      = kzH >= 13 and kzH < 17
+isOverlap = kzH >= 13 and kzH < 16
+isAsia    = kzH >= 0  and kzH < 4
+
+inKZ = (i_kzLondon and isLondon) or (i_kzNY and isNY) or (i_kzAsia and isAsia)
+
+kzName = "Off-Session"
+if isOverlap and i_kzLondon and i_kzNY
+    kzName := "LON / NY"
+else if isLondon and i_kzLondon
+    kzName := "London"
+else if isNY and i_kzNY
+    kzName := "New York"
+else if isAsia and i_kzAsia
+    kzName := "Asia"
+
+// ============================================================================
+// SWING DETECTION & ZONE CREATION
+// ============================================================================
+
+ph = ta.pivothigh(i_pivotLen, i_pivotLen)
+pl = ta.pivotlow(i_pivotLen, i_pivotLen)
+
+var array<LiqPool> bullPools = array.new<LiqPool>()
+var array<LiqPool> bearPools = array.new<LiqPool>()
+
+// ─── Swing High → Sell-Side Zone ────────────────────────────────────────────
+if not na(ph)
+    sTop = high[i_pivotLen]
+    sBtm = i_swingArea == "Wick Extremity"
+         ? math.max(open[i_pivotLen], close[i_pivotLen])
+         : low[i_pivotLen]
+    merged = false
+    if bearPools.size() > 0
+        for i = bearPools.size() - 1 to 0 by 1
+            p = bearPools.get(i)
+            if not p.swept and math.abs(sTop - p.top) / math.max(p.top, 1) < 0.003
+                p.top := math.max(p.top, sTop)
+                p.btm := math.min(p.btm, sBtm)
+                p.bx.set_top(p.top)
+                p.bx.set_bottom(p.btm)
+                merged := true
+                break
+    if not merged
+        bx  = box.new(n - i_pivotLen, sTop, n, sBtm,
+             bgcolor=BEAR_A90, border_color=BEAR_A80, border_width=1)
+        lab = label.new(n, sTop, "",
+             color=TRANSPARENT, textcolor=TXT_DIM,
+             style=label.style_label_down, size=lblSz)
+        bearPools.push(LiqPool.new(sTop, sBtm, n - i_pivotLen, -1, 1,
+             n - i_pivotLen, false, false, 0, 0.0, bx, lab))
+
+// ─── Swing Low → Buy-Side Zone ─────────────────────────────────────────────
+if not na(pl)
+    sBtm = low[i_pivotLen]
+    sTop = i_swingArea == "Wick Extremity"
+         ? math.min(open[i_pivotLen], close[i_pivotLen])
+         : high[i_pivotLen]
+    merged = false
+    if bullPools.size() > 0
+        for i = bullPools.size() - 1 to 0 by 1
+            p = bullPools.get(i)
+            if not p.swept and math.abs(sBtm - p.btm) / math.max(p.btm, 1) < 0.003
+                p.top := math.max(p.top, sTop)
+                p.btm := math.min(p.btm, sBtm)
+                p.bx.set_top(p.top)
+                p.bx.set_bottom(p.btm)
+                merged := true
+                break
+    if not merged
+        bx  = box.new(n - i_pivotLen, sTop, n, sBtm,
+             bgcolor=BULL_A90, border_color=BULL_A80, border_width=1)
+        lab = label.new(n, sBtm, "",
+             color=TRANSPARENT, textcolor=TXT_DIM,
+             style=label.style_label_up, size=lblSz)
+        bullPools.push(LiqPool.new(sTop, sBtm, n - i_pivotLen, 1, 1,
+             n - i_pivotLen, false, false, 0, 0.0, bx, lab))
+
+// ============================================================================
+// ZONE MANAGEMENT — TOUCHES, SWEEPS, EXPIRATION
+// ============================================================================
+
+var int   sweepDir      = 0
+var int   sweepBarIdx   = 0
+var float sweepPoolTop  = na
+var float sweepPoolBtm  = na
+
+var bool  longSignal    = false
+var bool  shortSignal   = false
+var float entrySL       = na
+var float entryTP       = na
+var float entryPrc      = na
+var int   dailyTrades   = 0
+var int   entryBarIdx   = 0
+
+longSignal  := false
+shortSignal := false
+
+if ta.change(dayofweek) != 0
+    dailyTrades := 0
+
+// Helper for sweep detection
+sweepCheck(string mode, bool wickSw, bool brkSw) =>
+    switch mode
+        "Wicks Only"      => wickSw
+        "Break + Retest"  => brkSw
+        =>                   wickSw or brkSw
+
+// ─── Sell-Side Zones (Swing Highs) ─────────────────────────────────────────
+if bearPools.size() > 0
+    for i = bearPools.size() - 1 to 0 by 1
+        p = bearPools.get(i)
+        age = n - p.x1
+        if age > i_maxPoolAge or (p.swept and n - p.sweepBar > 50)
+            p.bx.delete()
+            p.lab.delete()
+            bearPools.remove(i)
+            continue
+        if p.swept
+            continue
+        // Touch counting
+        if high > p.btm and bodyTop <= p.btm and n - p.lastContactBar >= i_gapBars
+            p.contacts     += 1
+            p.lastContactBar := n
+        // Volume accumulation
+        if high > p.btm and low < p.top
+            tr = high - low
+            if tr > 0
+                p.vol += math.max(high - p.btm, 0) / tr * volume
+        // Confirmation
+        p.confirmed := p.contacts >= i_minContacts and age >= i_confirmBars
+        // Visual state
+        if p.confirmed
+            p.bx.set_bgcolor(color.new(BEAR, 78))
+            p.bx.set_border_color(BEAR_A50)
+            p.lab.set_xy(n + 3, p.top)
+            p.lab.set_text(str.tostring(p.contacts) + " touches")
+            p.lab.set_textcolor(BEAR)
+        p.bx.set_right(n + 3)
+        // Sweep
+        if p.confirmed and isConfirmed
+            wickSw = high > p.top and close < p.top
+            brkSw  = not na(close[1]) and close[1] > p.top and close < p.top
+            if sweepCheck(i_sweepMode, wickSw, brkSw)
+                p.swept    := true
+                p.sweepBar := n
+                p.bx.set_border_color(BEAR)
+                p.bx.set_border_style(line.style_dashed)
+                p.bx.set_bgcolor(color.new(BEAR, 92))
+                p.bx.set_right(n)
+                sweepBarIdx  := n
+                sweepDir     := -1
+                sweepPoolTop := p.top
+                sweepPoolBtm := p.btm
+                label.new(n, high + atrVal * 0.15, "sweep",
+                     color=TRANSPARENT, textcolor=BEAR,
+                     style=label.style_label_down, size=size.tiny)
+
+// ─── Buy-Side Zones (Swing Lows) ───────────────────────────────────────────
+if bullPools.size() > 0
+    for i = bullPools.size() - 1 to 0 by 1
+        p = bullPools.get(i)
+        age = n - p.x1
+        if age > i_maxPoolAge or (p.swept and n - p.sweepBar > 50)
+            p.bx.delete()
+            p.lab.delete()
+            bullPools.remove(i)
+            continue
+        if p.swept
+            continue
+        // Touch counting
+        if low < p.top and bodyBot >= p.top and n - p.lastContactBar >= i_gapBars
+            p.contacts     += 1
+            p.lastContactBar := n
+        // Volume accumulation
+        if high > p.btm and low < p.top
+            tr = high - low
+            if tr > 0
+                p.vol += math.max(p.top - low, 0) / tr * volume
+        // Confirmation
+        p.confirmed := p.contacts >= i_minContacts and age >= i_confirmBars
+        // Visual state
+        if p.confirmed
+            p.bx.set_bgcolor(color.new(BULL, 78))
+            p.bx.set_border_color(BULL_A50)
+            p.lab.set_xy(n + 3, p.btm)
+            p.lab.set_text(str.tostring(p.contacts) + " touches")
+            p.lab.set_textcolor(BULL)
+        p.bx.set_right(n + 3)
+        // Sweep
+        if p.confirmed and isConfirmed
+            wickSw = low < p.btm and close > p.btm
+            brkSw  = not na(close[1]) and close[1] < p.btm and close > p.btm
+            if sweepCheck(i_sweepMode, wickSw, brkSw)
+                p.swept    := true
+                p.sweepBar := n
+                p.bx.set_border_color(BULL)
+                p.bx.set_border_style(line.style_dashed)
+                p.bx.set_bgcolor(color.new(BULL, 92))
+                p.bx.set_right(n)
+                sweepBarIdx  := n
+                sweepDir     := 1
+                sweepPoolTop := p.top
+                sweepPoolBtm := p.btm
+                label.new(n, low - atrVal * 0.15, "sweep",
+                     color=TRANSPARENT, textcolor=BULL,
+                     style=label.style_label_up, size=size.tiny)
+
+// ============================================================================
+// DISPLACEMENT & ENTRY SIGNALS
+// ============================================================================
+
+barsSinceSweep = n - sweepBarIdx
+hasDisp = bodyAbs >= i_dispATR * atrVal
+
+// ─── Long ───────────────────────────────────────────────────────────────────
+if barsSinceSweep > 0 and barsSinceSweep <= i_dispWindow and sweepDir == 1
+    dispOK = not i_reqDisp or (hasDisp and close > open)
+    if isConfirmed and inKZ and htfBull and dispOK and dailyTrades < i_maxTrades
+        sl   = sweepPoolBtm - slBuf
+        risk = close - sl
+        if risk > 0
+            tp = close + risk * i_minRR
+            longSignal  := true
+            entrySL     := sl
+            entryTP     := tp
+            entryPrc    := close
+            entryBarIdx := n
+            dailyTrades += 1
+            sweepDir    := 0
+            label.new(n, low - atrVal * 0.35,
+                 "Long  " + str.tostring(close, format.mintick),
+                 color=BULL, textcolor=color.white,
+                 style=label.style_label_up, size=size.tiny)
+
+// ─── Short ──────────────────────────────────────────────────────────────────
+if barsSinceSweep > 0 and barsSinceSweep <= i_dispWindow and sweepDir == -1
+    dispOK = not i_reqDisp or (hasDisp and close < open)
+    if isConfirmed and inKZ and htfBear and dispOK and dailyTrades < i_maxTrades
+        sl   = sweepPoolTop + slBuf
+        risk = sl - close
+        if risk > 0
+            tp = close - risk * i_minRR
+            shortSignal := true
+            entrySL     := sl
+            entryTP     := tp
+            entryPrc    := close
+            entryBarIdx := n
+            dailyTrades += 1
+            sweepDir    := 0
+            label.new(n, high + atrVal * 0.35,
+                 "Short  " + str.tostring(close, format.mintick),
+                 color=BEAR, textcolor=color.white,
+                 style=label.style_label_down, size=size.tiny)
+
+// ============================================================================
+// SL / TP VISUALIZATION
+// ============================================================================
+
+var line slLine  = na
+var line tpLine  = na
+var line entLine = na
+var label slLab  = na
+var label tpLab  = na
+
+if (longSignal or shortSignal) and i_showSLTP
+    if not na(slLine)
+        slLine.delete()
+    if not na(tpLine)
+        tpLine.delete()
+    if not na(entLine)
+        entLine.delete()
+    if not na(slLab)
+        slLab.delete()
+    if not na(tpLab)
+        tpLab.delete()
+    ext = n + 40
+    slLine  := line.new(n, entrySL, ext, entrySL,
+         color=color.new(BEAR, 40), style=line.style_dashed, width=1)
+    tpLine  := line.new(n, entryTP, ext, entryTP,
+         color=color.new(BULL, 40), style=line.style_dashed, width=1)
+    entLine := line.new(n, entryPrc, ext, entryPrc,
+         color=color.new(NEUT, 50), style=line.style_dotted, width=1)
+    slLab   := label.new(ext, entrySL,
+         "SL  " + str.tostring(entrySL, format.mintick),
+         color=TRANSPARENT, textcolor=BEAR, style=label.style_label_left, size=size.tiny)
+    tpLab   := label.new(ext, entryTP,
+         "TP  " + str.tostring(entryTP, format.mintick),
+         color=TRANSPARENT, textcolor=BULL, style=label.style_label_left, size=size.tiny)
+
+// ============================================================================
+// DASHBOARD
+// ============================================================================
+
+var table dash = na
+
+if i_showDash and barstate.islast
+    if na(dash)
+        dash := table.new(dashPos, 2, 8,
+             bgcolor=TBL_BG, border_width=1, border_color=TBL_FRAME,
+             frame_width=2, frame_color=TBL_FRAME)
+
+    // Row 0 — Header
+    table.cell(dash, 0, 0, "  Liquidity Model  ",
+         text_color=TXT_WHITE, text_size=size.small, bgcolor=TBL_HEAD)
+    table.cell(dash, 1, 0, "  Pro  ",
+         text_color=ACCENT, text_size=size.small, bgcolor=TBL_HEAD)
+
+    // Row 1 — Trend Bias
+    biasText = htfBull ? "Bullish" : htfBear ? "Bearish" : "Neutral"
+    biasCss  = htfBull ? BULL : htfBear ? BEAR : NEUT
+    table.cell(dash, 0, 1, " Trend ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 1, " " + biasText + " ", text_color=biasCss, text_size=size.tiny, bgcolor=TBL_BG)
+
+    // Row 2 — Session
+    table.cell(dash, 0, 2, " Session ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 2, " " + kzName + " ", text_color=inKZ ? ACCENT : TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+
+    // Row 3 — Active Zones
+    aBull = 0
+    aBear = 0
+    for p in bullPools
+        if p.confirmed and not p.swept
+            aBull += 1
+    for p in bearPools
+        if p.confirmed and not p.swept
+            aBear += 1
+    table.cell(dash, 0, 3, " Zones ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 3, " " + str.tostring(aBull) + " buy  /  " + str.tostring(aBear) + " sell ", text_color=TXT_LIGHT, text_size=size.tiny, bgcolor=TBL_BG)
+
+    // Row 4 — Signals Today
+    tCss = dailyTrades >= i_maxTrades ? BEAR : BULL
+    table.cell(dash, 0, 4, " Signals ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 4, " " + str.tostring(dailyTrades) + " / " + str.tostring(i_maxTrades) + " ", text_color=tCss, text_size=size.tiny, bgcolor=TBL_BG)
+
+    // Row 5 — Readiness
+    rBias = htfBull or htfBear
+    rKZ   = inKZ
+    rCap  = dailyTrades < i_maxTrades
+    allOK = rBias and rKZ and rCap
+    readyTxt = (rBias ? "●" : "○") + " Bias   " + (rKZ ? "●" : "○") + " Session   " + (rCap ? "●" : "○") + " Capacity"
+    table.cell(dash, 0, 5, " Status ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 5, " " + readyTxt + " ", text_color=allOK ? BULL : ACCENT, text_size=size.tiny, bgcolor=TBL_BG)
+
+    // Row 6 — Config
+    table.cell(dash, 0, 6, " Config ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 6, " " + i_htfTF + "  " + i_htfMAType + " " + str.tostring(i_htfMALen) + "  ·  " + i_sweepMode + " ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+
+    // Row 7 — R:R
+    table.cell(dash, 0, 7, " Min R:R ", text_color=TXT_DIM, text_size=size.tiny, bgcolor=TBL_BG)
+    table.cell(dash, 1, 7, " 1 : " + str.tostring(i_minRR, "#.#") + " ", text_color=ACCENT, text_size=size.tiny, bgcolor=TBL_BG)
+
+// ============================================================================
+// PLOTS
+// ============================================================================
+
+plotshape(longSignal, "Long", shape.triangleup, location.belowbar,
+     BULL, size=size.small, force_overlay=true)
+plotshape(shortSignal, "Short", shape.triangledown, location.abovebar,
+     BEAR, size=size.small, force_overlay=true)
+
+biasClr = htfBull ? BULL_A96 : htfBear ? BEAR_A96 : na
+bgcolor(i_showBiasBg ? biasClr : na, title="Trend Bias", force_overlay=true)
+
+bgcolor(i_showKZBg and inKZ ? ACCENT_A96 : na, title="Session", force_overlay=true)
+
+// ============================================================================
+// ALERTS
+// ============================================================================
+
+if longSignal
+    alert(syminfo.ticker + " — Long @ " + str.tostring(close, format.mintick)
+         + "  |  SL: " + str.tostring(entrySL, format.mintick)
+         + "  TP: " + str.tostring(entryTP, format.mintick)
+         + "  |  R:R 1:" + str.tostring(i_minRR, "#.#")
+         + "  |  " + kzName, alert.freq_once_per_bar_close)
+
+if shortSignal
+    alert(syminfo.ticker + " — Short @ " + str.tostring(close, format.mintick)
+         + "  |  SL: " + str.tostring(entrySL, format.mintick)
+         + "  TP: " + str.tostring(entryTP, format.mintick)
+         + "  |  R:R 1:" + str.tostring(i_minRR, "#.#")
+         + "  |  " + kzName, alert.freq_once_per_bar_close)
+
+if sweepBarIdx == n and sweepDir != 0
+    alert(syminfo.ticker + " — " + (sweepDir == 1 ? "Buy" : "Sell")
+         + "-side liquidity swept", alert.freq_once_per_bar_close)
+
+biasFlip = (htfBull and not htfBull[1]) or (htfBear and not htfBear[1])
+if biasFlip
+    alert(syminfo.ticker + " — Trend bias shifted "
+         + (htfBull ? "Bullish" : "Bearish"), alert.freq_once_per_bar_close)
+
+alertcondition(longSignal, "Long Entry", "LM Pro — Long entry signal")
+alertcondition(shortSignal, "Short Entry", "LM Pro — Short entry signal")
+
+// ============================================================================
