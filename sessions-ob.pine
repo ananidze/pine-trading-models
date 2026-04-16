@@ -98,6 +98,29 @@ label_size    = input.string(size.small, 'Label Size',
      options = [size.tiny, size.small, size.normal, size.large], group = 'OB Style')
 
 // ============================================================================
+// INPUTS — OB SCORING
+// ============================================================================
+
+show_ob_score  = input.bool(true,       'Show Score',  group = 'OB Scoring', tooltip = 'Append a 0–100 strength score to each order block label. Score = volume impulse (0–50) + OB height vs ATR (0–50).')
+ob_score_size  = input.string(size.tiny, 'Score Size', group = 'OB Scoring',
+     options = [size.tiny, size.small, size.normal])
+
+// ============================================================================
+// INPUTS — FAIR VALUE GAPS
+// ============================================================================
+
+show_fvg     = input.bool(true,  'Show FVGs',       group = 'Fair Value Gaps', tooltip = 'Display Fair Value Gap zones — 3-bar price imbalances where no trading occurred.')
+fvg_bull_css = input.color(color.new(#1a9e00, 85), 'Bullish Fill', inline = 'fvg_css', group = 'Fair Value Gaps')
+fvg_bear_css = input.color(color.new(#e01000, 85), 'Bearish Fill', inline = 'fvg_css', group = 'Fair Value Gaps')
+fvg_max      = input.int(5,      'Max FVGs',        group = 'Fair Value Gaps', minval = 1, maxval = 20, tooltip = 'Maximum number of unmitigated FVG zones shown per side.')
+fvg_mitigate = input.string('Partial', 'Mitigation', group = 'Fair Value Gaps',
+     options = ['Partial', 'Full'],
+     tooltip = 'Partial: FVG is removed on first price wick into the zone.\nFull: FVG is removed only when price closes through the entire zone.')
+show_fvg_labels = input.bool(true, 'Show Labels',  inline = 'fvg_lbl', group = 'Fair Value Gaps', tooltip = 'Display "Bull FVG" / "Bear FVG" text at the left edge of each zone.')
+fvg_label_size  = input.string(size.tiny, '',      inline = 'fvg_lbl', group = 'Fair Value Gaps',
+     options = [size.tiny, size.small, size.normal])
+
+// ============================================================================
 // FUNCTIONS — SESSIONS
 // ============================================================================
 
@@ -226,24 +249,28 @@ line_style_from(style) =>
         '····' => line.style_dotted
 
 // Accumulate OB coordinates into arrays when condition fires
-get_coordinates(condition, top, btm, ob_val) =>
-    var ob_top  = array.new_float(0)
-    var ob_btm  = array.new_float(0)
-    var ob_avg  = array.new_float(0)
-    var ob_left = array.new_int(0)
-    float ob    = na
+// Now also accumulates a score value in parallel
+get_coordinates(condition, top, btm, ob_val, score) =>
+    var ob_top   = array.new_float(0)
+    var ob_btm   = array.new_float(0)
+    var ob_avg   = array.new_float(0)
+    var ob_left  = array.new_int(0)
+    var ob_score = array.new_float(0)
+    float ob     = na
 
     if condition
-        array.unshift(ob_top,  top)
-        array.unshift(ob_btm,  btm)
-        array.unshift(ob_avg,  math.avg(top, btm))
-        array.unshift(ob_left, time[length])
+        array.unshift(ob_top,   top)
+        array.unshift(ob_btm,   btm)
+        array.unshift(ob_avg,   math.avg(top, btm))
+        array.unshift(ob_left,  time[length])
+        array.unshift(ob_score, score)
         ob := ob_val
 
-    [ob_top, ob_btm, ob_avg, ob_left, ob]
+    [ob_top, ob_btm, ob_avg, ob_left, ob_score, ob]
 
 // Remove mitigated OBs; iterate in reverse to avoid index-shift bugs
-remove_mitigated(ob_top, ob_btm, ob_left, ob_avg, target, bull) =>
+// Now also removes the parallel score entry
+remove_mitigated(ob_top, ob_btm, ob_left, ob_avg, ob_score, target, bull) =>
     mitigated  = false
     target_arr = bull ? ob_btm : ob_top
     i          = array.size(target_arr) - 1
@@ -251,17 +278,19 @@ remove_mitigated(ob_top, ob_btm, ob_left, ob_avg, target, bull) =>
     while i >= 0
         breached = bull ? target < array.get(target_arr, i) : target > array.get(target_arr, i)
         if breached
-            array.remove(ob_top,  i)
-            array.remove(ob_btm,  i)
-            array.remove(ob_avg,  i)
-            array.remove(ob_left, i)
+            array.remove(ob_top,   i)
+            array.remove(ob_btm,   i)
+            array.remove(ob_avg,   i)
+            array.remove(ob_left,  i)
+            array.remove(ob_score, i)
             mitigated := true
         i -= 1
 
     mitigated
 
 // Pre-allocate drawing objects on bar 0; reposition on last bar
-set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ext_last, bg_css, border_css, lvl_css, bull) =>
+// Accepts ob_score array and integrates strength score into label when show_ob_score is true
+set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ob_score, ext_last, bg_css, border_css, lvl_css, bull) =>
     var ob_box = array.new_box(0)
     var ob_lvl = array.new_line(0)
     var ob_lbl = array.new_label(0)
@@ -312,12 +341,39 @@ set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ext_last, bg_css, border_css, 
                 line.set_xy2(lv, lft + 1, avg_v)
 
                 if show_labels
-                    txt = bull ? 'Bull OB' : 'Bear OB'
+                    ob_lbl_txt  = bull ? 'Bull OB' : 'Bear OB'
+                    score_v     = array.size(ob_score) > i ? array.get(ob_score, i) : 50.
+                    score_int   = int(score_v)
+                    lbl_txt     = show_ob_score ? ob_lbl_txt + '  ' + str.tostring(score_int) : ob_lbl_txt
+                    lbl_css     = show_ob_score ? (score_v >= 70 ? border_css : score_v >= 40 ? color.new(border_css, 40) : color.new(border_css, 70)) : color.new(border_css, 20)
+                    lbl_sz      = show_ob_score ? ob_score_size : label_size
+
                     label.set_xy(lbl, lft, avg_v)
-                    label.set_text(lbl, txt)
+                    label.set_text(lbl, lbl_txt)
                     label.set_style(lbl, label.style_label_right)
-                    label.set_textcolor(lbl, color.new(border_css, 20))
-                    label.set_size(lbl, label_size)
+                    label.set_textcolor(lbl, lbl_css)
+                    label.set_size(lbl, lbl_sz)
+
+// ============================================================================
+// FUNCTIONS — OB SCORING
+// ============================================================================
+
+// Compute OB strength score (0–100) at pivot confirmation bar
+// vol_score: pivot volume vs rolling average, normalized 0–50
+// range_score: OB height as % of ATR, normalized 0–50
+calc_ob_score(ob_top, ob_btm) =>
+    atr_val    = ta.atr(14)
+    vol_avg    = ta.sma(volume, 20)
+    vol_ratio  = vol_avg > 0 ? volume[length] / vol_avg : 1.
+    vol_score  = math.min(50., (vol_ratio - 1.) * 25.)
+    vol_score  := math.max(0., vol_score)
+
+    ob_height   = math.abs(ob_top - ob_btm)
+    range_ratio = atr_val > 0 ? ob_height / atr_val : 0.5
+    range_score = math.min(50., range_ratio * 50.)
+    range_score := math.max(0., range_score)
+
+    math.min(100., math.max(0., vol_score + range_score))
 
 // ============================================================================
 // SESSION DETECTION
@@ -514,18 +570,186 @@ else
 
 phv = ta.pivothigh(volume, length, length)
 
+// Pre-compute OB scores at pivot bar (confirmed, no repainting)
+bull_ob_top_raw  = hl2[length]
+bull_ob_btm_raw  = low[length]
+bear_ob_top_raw  = high[length]
+bear_ob_btm_raw  = hl2[length]
+
+bull_score = calc_ob_score(bull_ob_top_raw, bull_ob_btm_raw)
+bear_score = calc_ob_score(bear_ob_top_raw, bear_ob_btm_raw)
+
 // ============================================================================
 // ORDER BLOCKS
 // ============================================================================
 
-[bull_top, bull_btm, bull_avg, bull_left, bull_ob] = get_coordinates(bool(phv) and os == 1, hl2[length], low[length],  low[length])
-[bear_top, bear_btm, bear_avg, bear_left, bear_ob] = get_coordinates(bool(phv) and os == 0, high[length], hl2[length], high[length])
+[bull_top, bull_btm, bull_avg, bull_left, bull_scores, bull_ob] = get_coordinates(bool(phv) and os == 1, bull_ob_top_raw, bull_ob_btm_raw, low[length],  bull_score)
+[bear_top, bear_btm, bear_avg, bear_left, bear_scores, bear_ob] = get_coordinates(bool(phv) and os == 0, bear_ob_top_raw, bear_ob_btm_raw, high[length], bear_score)
 
-mitigated_bull = remove_mitigated(bull_top, bull_btm, bull_left, bull_avg, target_bull, true)
-mitigated_bear = remove_mitigated(bear_top, bear_btm, bear_left, bear_avg, target_bear, false)
+mitigated_bull = remove_mitigated(bull_top, bull_btm, bull_left, bull_avg, bull_scores, target_bull, true)
+mitigated_bear = remove_mitigated(bear_top, bear_btm, bear_left, bear_avg, bear_scores, target_bear, false)
 
-set_order_blocks(bull_top, bull_btm, bull_left, bull_avg, bull_ext_last, bg_bull_css, bull_css, bull_avg_css, true)
-set_order_blocks(bear_top, bear_btm, bear_left, bear_avg, bear_ext_last, bg_bear_css, bear_css, bear_avg_css, false)
+set_order_blocks(bull_top, bull_btm, bull_left, bull_avg, bull_scores, bull_ext_last, bg_bull_css, bull_css, bull_avg_css, true)
+set_order_blocks(bear_top, bear_btm, bear_left, bear_avg, bear_scores, bear_ext_last, bg_bear_css, bear_css, bear_avg_css, false)
+
+// ============================================================================
+// FAIR VALUE GAP DETECTION
+// ============================================================================
+
+// FVG detected at close of the middle bar (bar[1]) — confirmed, no repainting
+// Bullish FVG: gap between high[2] and low[0]  (low[0] > high[2])
+// Bearish FVG: gap between low[2] and high[0]  (high[0] < low[2])
+fvg_bull_cond = show_fvg and barstate.isconfirmed and low > high[2]
+fvg_bear_cond = show_fvg and barstate.isconfirmed and high < low[2]
+
+// FVG zone boundaries (set at detection bar)
+fvg_bull_top_raw = low          // candle[0] low  = top of gap from below
+fvg_bull_btm_raw = high[2]      // candle[2] high = bottom of gap
+
+fvg_bear_top_raw = low[2]       // candle[2] low  = top of gap
+fvg_bear_btm_raw = high         // candle[0] high = bottom of gap from above
+
+// Persistent FVG zone arrays
+var fvg_bull_tops  = array.new_float(0)
+var fvg_bull_btms  = array.new_float(0)
+var fvg_bull_lefts = array.new_int(0)
+var fvg_bull_boxes = array.new_box(0)
+var fvg_bull_lbls  = array.new_label(0)
+
+var fvg_bear_tops  = array.new_float(0)
+var fvg_bear_btms  = array.new_float(0)
+var fvg_bear_lefts = array.new_int(0)
+var fvg_bear_boxes = array.new_box(0)
+var fvg_bear_lbls  = array.new_label(0)
+
+// Add new bullish FVG
+if fvg_bull_cond
+    array.unshift(fvg_bull_tops,  fvg_bull_top_raw)
+    array.unshift(fvg_bull_btms,  fvg_bull_btm_raw)
+    array.unshift(fvg_bull_lefts, time[1])
+    new_bx = box.new(time[1], fvg_bull_top_raw, time, fvg_bull_btm_raw,
+         xloc         = xloc.bar_time,
+         extend       = extend.right,
+         bgcolor      = fvg_bull_css,
+         border_color = na)
+    array.unshift(fvg_bull_boxes, new_bx)
+    fvg_bull_mid_t = math.avg(time[1], time)
+    new_lbl = show_fvg_labels ? label.new(int(fvg_bull_mid_t), math.avg(fvg_bull_top_raw, fvg_bull_btm_raw), 'Bull FVG',
+         xloc      = xloc.bar_time,
+         style     = label.style_label_left,
+         color     = color.new(color.black, 100),
+         textcolor = color.new(#1a9e00, 20),
+         size      = fvg_label_size) : label.new(na, na, '', xloc = xloc.bar_time, style = label.style_none)
+    array.unshift(fvg_bull_lbls, new_lbl)
+
+    // Trim to max
+    if array.size(fvg_bull_tops) > fvg_max
+        old_bx  = array.pop(fvg_bull_boxes)
+        old_lbl = array.pop(fvg_bull_lbls)
+        box.delete(old_bx)
+        label.delete(old_lbl)
+        array.pop(fvg_bull_tops)
+        array.pop(fvg_bull_btms)
+        array.pop(fvg_bull_lefts)
+
+// Add new bearish FVG
+if fvg_bear_cond
+    array.unshift(fvg_bear_tops,  fvg_bear_top_raw)
+    array.unshift(fvg_bear_btms,  fvg_bear_btm_raw)
+    array.unshift(fvg_bear_lefts, time[1])
+    new_bx = box.new(time[1], fvg_bear_top_raw, time, fvg_bear_btm_raw,
+         xloc         = xloc.bar_time,
+         extend       = extend.right,
+         bgcolor      = fvg_bear_css,
+         border_color = na)
+    array.unshift(fvg_bear_boxes, new_bx)
+    fvg_bear_mid_t = math.avg(time[1], time)
+    new_lbl = show_fvg_labels ? label.new(int(fvg_bear_mid_t), math.avg(fvg_bear_top_raw, fvg_bear_btm_raw), 'Bear FVG',
+         xloc      = xloc.bar_time,
+         style     = label.style_label_left,
+         color     = color.new(color.black, 100),
+         textcolor = color.new(#e01000, 20),
+         size      = fvg_label_size) : label.new(na, na, '', xloc = xloc.bar_time, style = label.style_none)
+    array.unshift(fvg_bear_lbls, new_lbl)
+
+    // Trim to max
+    if array.size(fvg_bear_tops) > fvg_max
+        old_bx  = array.pop(fvg_bear_boxes)
+        old_lbl = array.pop(fvg_bear_lbls)
+        box.delete(old_bx)
+        label.delete(old_lbl)
+        array.pop(fvg_bear_tops)
+        array.pop(fvg_bear_btms)
+        array.pop(fvg_bear_lefts)
+
+// ============================================================================
+// FAIR VALUE GAP MITIGATION
+// ============================================================================
+
+var bool fvg_bull_mitigated = false
+var bool fvg_bear_mitigated = false
+
+fvg_bull_mitigated := false
+fvg_bear_mitigated := false
+
+// Mitigate bullish FVGs (iterate reverse to avoid index shift)
+if array.size(fvg_bull_tops) > 0
+    j = array.size(fvg_bull_tops) - 1
+    while j >= 0
+        fvg_top = array.get(fvg_bull_tops, j)
+        fvg_btm = array.get(fvg_bull_btms, j)
+        // Partial: price wicks into gap; Full: close fills entire gap
+        breached = fvg_mitigate == 'Partial' ? low <= fvg_top : close <= fvg_btm
+        if breached
+            bx  = array.get(fvg_bull_boxes, j)
+            lbl = array.get(fvg_bull_lbls,  j)
+            box.delete(bx)
+            label.delete(lbl)
+            array.remove(fvg_bull_tops,  j)
+            array.remove(fvg_bull_btms,  j)
+            array.remove(fvg_bull_lefts, j)
+            array.remove(fvg_bull_boxes, j)
+            array.remove(fvg_bull_lbls,  j)
+            fvg_bull_mitigated := true
+        j -= 1
+
+// Mitigate bearish FVGs
+if array.size(fvg_bear_tops) > 0
+    j = array.size(fvg_bear_tops) - 1
+    while j >= 0
+        fvg_top = array.get(fvg_bear_tops, j)
+        fvg_btm = array.get(fvg_bear_btms, j)
+        breached = fvg_mitigate == 'Partial' ? high >= fvg_btm : close >= fvg_top
+        if breached
+            bx  = array.get(fvg_bear_boxes, j)
+            lbl = array.get(fvg_bear_lbls,  j)
+            box.delete(bx)
+            label.delete(lbl)
+            array.remove(fvg_bear_tops,  j)
+            array.remove(fvg_bear_btms,  j)
+            array.remove(fvg_bear_lefts, j)
+            array.remove(fvg_bear_boxes, j)
+            array.remove(fvg_bear_lbls,  j)
+            fvg_bear_mitigated := true
+        j -= 1
+
+// Reposition FVG labels to current bar on each tick — keeps them at the right edge of the extended box
+if barstate.islast and show_fvg_labels
+    if array.size(fvg_bull_lbls) > 0
+        for k = 0 to array.size(fvg_bull_lbls) - 1
+            lbl   = array.get(fvg_bull_lbls, k)
+            top_v = array.get(fvg_bull_tops,  k)
+            btm_v = array.get(fvg_bull_btms,  k)
+            label.set_xy(lbl, time, math.avg(top_v, btm_v))
+            label.set_style(lbl, label.style_label_left)
+
+    if array.size(fvg_bear_lbls) > 0
+        for k = 0 to array.size(fvg_bear_lbls) - 1
+            lbl   = array.get(fvg_bear_lbls, k)
+            top_v = array.get(fvg_bear_tops,  k)
+            btm_v = array.get(fvg_bear_btms,  k)
+            label.set_xy(lbl, time, math.avg(top_v, btm_v))
+            label.set_style(lbl, label.style_label_left)
 
 // ============================================================================
 // PLOTS — SESSIONS
@@ -599,3 +823,12 @@ alertcondition(bool(bull_ob),        'Bullish OB Formed',    'Bullish order bloc
 alertcondition(bool(bear_ob),        'Bearish OB Formed',    'Bearish order block detected')
 alertcondition(bool(mitigated_bull), 'Bullish OB Mitigated', 'Bullish order block mitigated')
 alertcondition(bool(mitigated_bear), 'Bearish OB Mitigated', 'Bearish order block mitigated')
+
+// ============================================================================
+// ALERTS — FAIR VALUE GAPS
+// ============================================================================
+
+alertcondition(fvg_bull_cond,       'Bullish FVG Formed',    'Bullish fair value gap detected')
+alertcondition(fvg_bear_cond,       'Bearish FVG Formed',    'Bearish fair value gap detected')
+alertcondition(fvg_bull_mitigated,  'Bullish FVG Mitigated', 'Bullish fair value gap mitigated')
+alertcondition(fvg_bear_mitigated,  'Bearish FVG Mitigated', 'Bearish fair value gap mitigated')
