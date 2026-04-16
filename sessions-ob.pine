@@ -62,13 +62,6 @@ bg_transp    = input.int(88,   'Range Fill Opacity',  group = 'Range Style', min
 show_outline = input.bool(true,  'Range Border',       group = 'Range Style', tooltip = 'Show a dotted border around each session range box.')
 show_txt     = input.bool(true,  'Session Label',      group = 'Range Style', tooltip = 'Display the session name at the top-left of its range box.')
 
-// Dashboard
-show_dash     = input.bool(false, 'Show Dashboard',     group = 'Dashboard', tooltip = 'Show a summary table with active/inactive status for each session.')
-advanced_dash = input.bool(false, 'Advanced Dashboard', group = 'Dashboard', tooltip = 'Extend the table with trend direction (R²), session volume, and price standard deviation columns.')
-dash_loc      = input.string('Top Right', 'Location',
-     options = ['Top Right', 'Bottom Right', 'Bottom Left'], group = 'Dashboard')
-text_size     = input.string('Small', 'Size',
-     options = ['Tiny', 'Small', 'Normal'], group = 'Dashboard')
 
 // Dividers
 show_ses_div = input.bool(false, 'Session Divider', group = 'Dividers', tooltip = 'Plot a tick marker along the chart bottom for every bar inside an active session.')
@@ -94,8 +87,8 @@ bear_avg_css  = input.color(color.new(#9598a1, 40), 'Mid Line', inline = 'bear',
 line_style    = input.string('⎯⎯⎯', 'Mid Line Style', options = ['⎯⎯⎯', '----', '····'], group = 'OB Style')
 line_width    = input.int(1,   'Mid Line Width',      minval = 1, maxval = 4,   group = 'OB Style')
 show_labels   = input.bool(true, 'Show Labels',                                  group = 'OB Style', tooltip = 'Display "Bull OB" / "Bear OB" text at the left edge of each order block.')
-label_size    = input.string(size.small, 'Label Size',
-     options = [size.tiny, size.small, size.normal, size.large], group = 'OB Style')
+label_size_in = input.string('Small', 'Label Size',
+     options = ['Tiny', 'Small', 'Normal', 'Large', 'Adaptive'], group = 'OB Style', tooltip = 'Adaptive scales text automatically based on chart timeframe.')
 
 // ============================================================================
 // INPUTS — OB SCORING
@@ -104,6 +97,17 @@ label_size    = input.string(size.small, 'Label Size',
 show_ob_score  = input.bool(true,       'Show Score',  group = 'OB Scoring', tooltip = 'Append a 0–100 strength score to each order block label. Score = volume impulse (0–50) + OB height vs ATR (0–50).')
 ob_score_size  = input.string(size.tiny, 'Score Size', group = 'OB Scoring',
      options = [size.tiny, size.small, size.normal])
+
+// ============================================================================
+// INPUTS — LIQUIDITY (EQH / EQL)
+// ============================================================================
+
+show_liq      = input.bool(true,  'Show Liquidity',    group = 'Liquidity (EQH/EQL)', tooltip = 'Detect and plot equal highs (BSL) and equal lows (SSL).')
+liq_length    = input.int(10,     'Pivot Length',      group = 'Liquidity (EQH/EQL)', minval = 2, maxval = 50, tooltip = 'Bars needed strictly to the left and right to form a swing.')
+liq_tolerance = input.int(3,      'Tolerance (Ticks)', group = 'Liquidity (EQH/EQL)', minval = 0, tooltip = 'Max distance in ticks between pivots to be considered Equal Highs / Lows.')
+liq_max       = input.int(5,      'Max Lines',         group = 'Liquidity (EQH/EQL)', minval = 1, maxval = 20)
+liq_bsl_css   = input.color(color.new(#e01000, 0), 'BSL Color', inline = 'liq_css', group = 'Liquidity (EQH/EQL)')
+liq_ssl_css   = input.color(color.new(#1a9e00, 0), 'SSL Color', inline = 'liq_css', group = 'Liquidity (EQH/EQL)')
 
 // ============================================================================
 // INPUTS — FAIR VALUE GAPS
@@ -117,8 +121,24 @@ fvg_mitigate = input.string('Partial', 'Mitigation', group = 'Fair Value Gaps',
      options = ['Partial', 'Full'],
      tooltip = 'Partial: FVG is removed on first price wick into the zone.\nFull: FVG is removed only when price closes through the entire zone.')
 show_fvg_labels = input.bool(true, 'Show Labels',  inline = 'fvg_lbl', group = 'Fair Value Gaps', tooltip = 'Display "Bull FVG" / "Bear FVG" text at the left edge of each zone.')
-fvg_label_size  = input.string(size.tiny, '',      inline = 'fvg_lbl', group = 'Fair Value Gaps',
-     options = [size.tiny, size.small, size.normal])
+fvg_lbl_sz_in   = input.string('Tiny', '',      inline = 'fvg_lbl', group = 'Fair Value Gaps',
+     options = ['Tiny', 'Small', 'Normal', 'Adaptive'])
+
+// ============================================================================
+// ADAPTIVE SIZING
+// ============================================================================
+
+get_adaptive_size(opt) =>
+    switch opt
+        'Tiny'     => size.tiny
+        'Small'    => size.small
+        'Normal'   => size.normal
+        'Large'    => size.large
+        'Adaptive' => timeframe.period == '1' ? size.tiny : timeframe.period == '5' or timeframe.period == '15' ? size.small : timeframe.period == '60' or timeframe.period == '240' ? size.normal : size.large
+        => size.small
+
+label_size     = get_adaptive_size(label_size_in)
+fvg_label_size = get_adaptive_size(fvg_lbl_sz_in)
 
 // ============================================================================
 // FUNCTIONS — SESSIONS
@@ -310,7 +330,7 @@ set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ob_score, ext_last, bg_css, bo
                  width  = line_width))
             array.unshift(ob_lbl, label.new(na, na, '',
                  xloc      = xloc.bar_time,
-                 style     = label.style_label_right,
+                 style     = label.style_label_left,
                  color     = color.new(color.black, 100),
                  textcolor = color.new(border_css, 20),
                  size      = label_size))
@@ -348,9 +368,9 @@ set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ob_score, ext_last, bg_css, bo
                     lbl_css     = show_ob_score ? (score_v >= 70 ? border_css : score_v >= 40 ? color.new(border_css, 40) : color.new(border_css, 70)) : color.new(border_css, 20)
                     lbl_sz      = show_ob_score ? ob_score_size : label_size
 
-                    label.set_xy(lbl, lft, avg_v)
+                    label.set_xy(lbl, time, avg_v)
                     label.set_text(lbl, lbl_txt)
-                    label.set_style(lbl, label.style_label_right)
+                    label.set_style(lbl, label.style_label_left)
                     label.set_textcolor(lbl, lbl_css)
                     label.set_size(lbl, lbl_sz)
 
@@ -361,15 +381,13 @@ set_order_blocks(ob_top, ob_btm, ob_left, ob_avg, ob_score, ext_last, bg_css, bo
 // Compute OB strength score (0–100) at pivot confirmation bar
 // vol_score: pivot volume vs rolling average, normalized 0–50
 // range_score: OB height as % of ATR, normalized 0–50
-calc_ob_score(ob_top, ob_btm) =>
-    atr_val    = ta.atr(14)
-    vol_avg    = ta.sma(volume, 20)
-    vol_ratio  = vol_avg > 0 ? volume[length] / vol_avg : 1.
+calc_ob_score(ob_top, ob_btm, atr_v, vol_v) =>
+    vol_ratio  = vol_v > 0 ? volume[length] / vol_v : 1.
     vol_score  = math.min(50., (vol_ratio - 1.) * 25.)
     vol_score  := math.max(0., vol_score)
 
     ob_height   = math.abs(ob_top - ob_btm)
-    range_ratio = atr_val > 0 ? ob_height / atr_val : 0.5
+    range_ratio = atr_v > 0 ? ob_height / atr_v : 0.5
     range_score = math.min(50., range_ratio * 50.)
     range_score := math.max(0., range_score)
 
@@ -392,43 +410,7 @@ sesb_on = bool(is_sesb)
 sesc_on = bool(is_sesc)
 sesd_on = bool(is_sesd)
 
-// ============================================================================
-// DASHBOARD
-// ============================================================================
 
-var table_position = dash_loc == 'Bottom Left' ? position.bottom_left : dash_loc == 'Top Right' ? position.top_right : position.bottom_right
-var table_size     = text_size == 'Tiny' ? size.tiny : text_size == 'Normal' ? size.normal : size.small
-
-// Cached dashboard colors
-var color C_TXT      = color.new(color.white, 10)
-var color C_HDR      = color.new(color.white, 30)
-var color C_ACTIVE   = color.new(#089981, 20)
-var color C_INACTIVE = color.new(#f23645, 20)
-
-var tb = table.new(table_position, 5, 6,
-     bgcolor = color.new(#1a1e2e, 5))
-
-if barstate.isfirst and show_dash
-    table.cell(tb, 0, 0, 'Sessions + OB', text_color = C_HDR, text_size = table_size)
-    table.merge_cells(tb, 0, 0, 4, 0)
-
-    table.cell(tb, 0, 2, sesa_txt, text_color = sesa_css, text_size = table_size)
-    table.cell(tb, 0, 3, sesb_txt, text_color = sesb_css, text_size = table_size)
-    table.cell(tb, 0, 4, sesc_txt, text_color = sesc_css, text_size = table_size)
-    table.cell(tb, 0, 5, sesd_txt, text_color = sesd_css, text_size = table_size)
-
-    if advanced_dash
-        table.cell(tb, 0, 1, 'Session', text_color = C_HDR, text_size = table_size)
-        table.cell(tb, 1, 1, 'Status',  text_color = C_HDR, text_size = table_size)
-        table.cell(tb, 2, 1, 'Trend',   text_color = C_HDR, text_size = table_size)
-        table.cell(tb, 3, 1, 'Volume',  text_color = C_HDR, text_size = table_size)
-        table.cell(tb, 4, 1, 'σ',       text_color = C_HDR, text_size = table_size)
-
-if barstate.islast and show_dash
-    table.cell(tb, 1, 2, sesa_on ? 'Active' : 'Inactive', bgcolor = sesa_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-    table.cell(tb, 1, 3, sesb_on ? 'Active' : 'Inactive', bgcolor = sesb_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-    table.cell(tb, 1, 4, sesc_on ? 'Active' : 'Inactive', bgcolor = sesc_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-    table.cell(tb, 1, 5, sesd_on ? 'Active' : 'Inactive', bgcolor = sesd_on ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
 
 // ============================================================================
 // SESSION OVERLAYS
@@ -465,37 +447,21 @@ if show_sesd and sesd_range
     min_sesd  := min
 
 // Trendlines
-if show_sesa and (sesa_tl or advanced_dash)
+if show_sesa and sesa_tl
     [y1, y2, stdev, r2] = get_linreg(is_sesa)
-    if advanced_dash
-        table.cell(tb, 2, 2, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-        table.cell(tb, 4, 2, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
-    if sesa_tl
-        set_line(is_sesa, y1, y2, sesa_css)
+    set_line(is_sesa, y1, y2, sesa_css)
 
-if show_sesb and (sesb_tl or advanced_dash)
+if show_sesb and sesb_tl
     [y1, y2, stdev, r2] = get_linreg(is_sesb)
-    if advanced_dash
-        table.cell(tb, 2, 3, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-        table.cell(tb, 4, 3, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
-    if sesb_tl
-        set_line(is_sesb, y1, y2, sesb_css)
+    set_line(is_sesb, y1, y2, sesb_css)
 
-if show_sesc and (sesc_tl or advanced_dash)
+if show_sesc and sesc_tl
     [y1, y2, stdev, r2] = get_linreg(is_sesc)
-    if advanced_dash
-        table.cell(tb, 2, 4, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-        table.cell(tb, 4, 4, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
-    if sesc_tl
-        set_line(is_sesc, y1, y2, sesc_css)
+    set_line(is_sesc, y1, y2, sesc_css)
 
-if show_sesd and (sesd_tl or advanced_dash)
+if show_sesd and sesd_tl
     [y1, y2, stdev, r2] = get_linreg(is_sesd)
-    if advanced_dash
-        table.cell(tb, 2, 5, str.tostring(r2,    '#.##'),   bgcolor = r2 > 0 ? C_ACTIVE : C_INACTIVE, text_color = C_TXT, text_size = table_size)
-        table.cell(tb, 4, 5, str.tostring(stdev, '#.####'),                                               text_color = C_TXT, text_size = table_size)
-    if sesd_tl
-        set_line(is_sesd, y1, y2, sesd_css)
+    set_line(is_sesd, y1, y2, sesd_css)
 
 // Mean Lines
 if show_sesa and sesa_avg
@@ -520,33 +486,21 @@ var float vwap_b = na
 var float vwap_c = na
 var float vwap_d = na
 
-if show_sesa and (sesa_vwap or advanced_dash)
+if show_sesa and sesa_vwap
     [num, den] = get_vwap(is_sesa)
-    if sesa_vwap
-        vwap_a := num / den
-    if advanced_dash
-        table.cell(tb, 3, 2, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+    vwap_a := num / den
 
-if show_sesb and (sesb_vwap or advanced_dash)
+if show_sesb and sesb_vwap
     [num, den] = get_vwap(is_sesb)
-    if sesb_vwap
-        vwap_b := num / den
-    if advanced_dash
-        table.cell(tb, 3, 3, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+    vwap_b := num / den
 
-if show_sesc and (sesc_vwap or advanced_dash)
+if show_sesc and sesc_vwap
     [num, den] = get_vwap(is_sesc)
-    if sesc_vwap
-        vwap_c := num / den
-    if advanced_dash
-        table.cell(tb, 3, 4, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+    vwap_c := num / den
 
-if show_sesd and (sesd_vwap or advanced_dash)
+if show_sesd and sesd_vwap
     [num, den] = get_vwap(is_sesd)
-    if sesd_vwap
-        vwap_d := num / den
-    if advanced_dash
-        table.cell(tb, 3, 5, str.tostring(den, format.volume), text_color = C_TXT, text_size = table_size)
+    vwap_d := num / den
 
 // ============================================================================
 // ORDER BLOCK CALCULATIONS
@@ -576,8 +530,12 @@ bull_ob_btm_raw  = low[length]
 bear_ob_top_raw  = high[length]
 bear_ob_btm_raw  = hl2[length]
 
-bull_score = calc_ob_score(bull_ob_top_raw, bull_ob_btm_raw)
-bear_score = calc_ob_score(bear_ob_top_raw, bear_ob_btm_raw)
+// Global cache for scoring
+sys_atr = ta.atr(14)
+sys_vol = ta.sma(volume, 20)
+
+bull_score = calc_ob_score(bull_ob_top_raw, bull_ob_btm_raw, sys_atr, sys_vol)
+bear_score = calc_ob_score(bear_ob_top_raw, bear_ob_btm_raw, sys_atr, sys_vol)
 
 // ============================================================================
 // ORDER BLOCKS
@@ -752,6 +710,167 @@ if barstate.islast and show_fvg_labels
             label.set_style(lbl, label.style_label_left)
 
 // ============================================================================
+// LIQUIDITY DETECTION & SWEEPS
+// ============================================================================
+
+liq_ph = ta.pivothigh(high, liq_length, liq_length)
+liq_pl = ta.pivotlow(low, liq_length, liq_length)
+
+var liq_bsl_prices = array.new_float(0)
+var liq_bsl_lefts  = array.new_int(0)
+var liq_bsl_lines  = array.new_line(0)
+var liq_bsl_lbls   = array.new_label(0)
+var liq_bsl_swept  = array.new_bool(0)
+
+var liq_ssl_prices = array.new_float(0)
+var liq_ssl_lefts  = array.new_int(0)
+var liq_ssl_lines  = array.new_line(0)
+var liq_ssl_lbls   = array.new_label(0)
+var liq_ssl_swept  = array.new_bool(0)
+
+var bool bsl_sweep_alert = false
+var bool ssl_sweep_alert = false
+bsl_sweep_alert := false
+ssl_sweep_alert := false
+
+float liq_tol_val = liq_tolerance * syminfo.mintick
+
+// ─── BSL Registration ───────────────────────────────────────────────────────
+if show_liq and not na(liq_ph)
+    float new_bsl = high[liq_length]
+    int   new_bar = time[liq_length]
+    bool  merged  = false
+
+    if array.size(liq_bsl_prices) > 0
+        for i = array.size(liq_bsl_prices) - 1 to 0 by 1
+            float p     = array.get(liq_bsl_prices, i)
+            bool  swept = array.get(liq_bsl_swept, i)
+            if not swept and math.abs(new_bsl - p) <= liq_tol_val
+                merged := true
+                if new_bsl > p
+                    array.set(liq_bsl_prices, i, new_bsl)
+                    line  ln = array.get(liq_bsl_lines, i)
+                    label lb = array.get(liq_bsl_lbls, i)
+                    line.set_y1(ln, new_bsl)
+                    line.set_y2(ln, new_bsl)
+                    label.set_y(lb, new_bsl)
+                break
+
+    if not merged
+        array.unshift(liq_bsl_prices, new_bsl)
+        array.unshift(liq_bsl_lefts,  new_bar)
+        array.unshift(liq_bsl_swept,  false)
+        l = line.new(new_bar, new_bsl, time, new_bsl, 
+             xloc  = xloc.bar_time, 
+             color = liq_bsl_css, 
+             width = 1, 
+             style = line.style_solid)
+        array.unshift(liq_bsl_lines, l)
+        b = label.new(time + int(nz(time - time[1])) * 5, new_bsl, "BSL", 
+             xloc      = xloc.bar_time, 
+             color     = color.new(color.black, 100), 
+             textcolor = liq_bsl_css, 
+             style     = label.style_label_left, 
+             size      = size.tiny)
+        array.unshift(liq_bsl_lbls, b)
+
+        if array.size(liq_bsl_prices) > liq_max
+            line.delete(array.pop(liq_bsl_lines))
+            label.delete(array.pop(liq_bsl_lbls))
+            array.pop(liq_bsl_prices)
+            array.pop(liq_bsl_lefts)
+            array.pop(liq_bsl_swept)
+
+// ─── SSL Registration ───────────────────────────────────────────────────────
+if show_liq and not na(liq_pl)
+    float new_ssl = low[liq_length]
+    int   new_bar = time[liq_length]
+    bool  merged  = false
+
+    if array.size(liq_ssl_prices) > 0
+        for i = array.size(liq_ssl_prices) - 1 to 0 by 1
+            float p     = array.get(liq_ssl_prices, i)
+            bool  swept = array.get(liq_ssl_swept, i)
+            if not swept and math.abs(new_ssl - p) <= liq_tol_val
+                merged := true
+                if new_ssl < p
+                    array.set(liq_ssl_prices, i, new_ssl)
+                    line  ln = array.get(liq_ssl_lines, i)
+                    label lb = array.get(liq_ssl_lbls, i)
+                    line.set_y1(ln, new_ssl)
+                    line.set_y2(ln, new_ssl)
+                    label.set_y(lb, new_ssl)
+                break
+
+    if not merged
+        array.unshift(liq_ssl_prices, new_ssl)
+        array.unshift(liq_ssl_lefts,  new_bar)
+        array.unshift(liq_ssl_swept,  false)
+        l = line.new(new_bar, new_ssl, time, new_ssl, 
+             xloc  = xloc.bar_time, 
+             color = liq_ssl_css, 
+             width = 1, 
+             style = line.style_solid)
+        array.unshift(liq_ssl_lines, l)
+        b = label.new(time + int(nz(time - time[1])) * 5, new_ssl, "SSL", 
+             xloc      = xloc.bar_time, 
+             color     = color.new(color.black, 100), 
+             textcolor = liq_ssl_css, 
+             style     = label.style_label_left, 
+             size      = size.tiny)
+        array.unshift(liq_ssl_lbls, b)
+
+        if array.size(liq_ssl_prices) > liq_max
+            line.delete(array.pop(liq_ssl_lines))
+            label.delete(array.pop(liq_ssl_lbls))
+            array.pop(liq_ssl_prices)
+            array.pop(liq_ssl_lefts)
+            array.pop(liq_ssl_swept)
+
+// ─── Sweep Engine & Extension ───────────────────────────────────────────────
+if show_liq
+    int liq_offset_t = int(nz(time - time[1])) * 5
+    // BSL
+    if array.size(liq_bsl_prices) > 0
+        for i = array.size(liq_bsl_prices) - 1 to 0 by 1
+            float p     = array.get(liq_bsl_prices, i)
+            bool  swept = array.get(liq_bsl_swept, i)
+            line  ln    = array.get(liq_bsl_lines, i)
+            label lb    = array.get(liq_bsl_lbls, i)
+            if not swept
+                line.set_x2(ln, time)
+                label.set_x(lb, time + liq_offset_t)
+                
+                if high >= p
+                    if barstate.isconfirmed
+                        array.set(liq_bsl_swept, i, true)
+                        line.set_color(ln, color.new(liq_bsl_css, 70))
+                        line.set_style(ln, line.style_dashed)
+                        label.set_textcolor(lb, color.new(liq_bsl_css, 50))
+                        label.set_text(lb, "BSL (Taken)")
+                        bsl_sweep_alert := true
+
+    // SSL
+    if array.size(liq_ssl_prices) > 0
+        for i = array.size(liq_ssl_prices) - 1 to 0 by 1
+            float p     = array.get(liq_ssl_prices, i)
+            bool  swept = array.get(liq_ssl_swept, i)
+            line  ln    = array.get(liq_ssl_lines, i)
+            label lb    = array.get(liq_ssl_lbls, i)
+            if not swept
+                line.set_x2(ln, time)
+                label.set_x(lb, time + liq_offset_t)
+                
+                if low <= p
+                    if barstate.isconfirmed
+                        array.set(liq_ssl_swept, i, true)
+                        line.set_color(ln, color.new(liq_ssl_css, 70))
+                        line.set_style(ln, line.style_dashed)
+                        label.set_textcolor(lb, color.new(liq_ssl_css, 50))
+                        label.set_text(lb, "SSL (Taken)")
+                        ssl_sweep_alert := true
+
+// ============================================================================
 // PLOTS — SESSIONS
 // ============================================================================
 
@@ -816,19 +935,54 @@ plot(bull_ob, 'Bull OB', bull_css, 2, plot.style_linebr, offset = -length, displ
 plot(bear_ob, 'Bear OB', bear_css, 2, plot.style_linebr, offset = -length, display = display.none, force_overlay = true)
 
 // ============================================================================
-// ALERTS — ORDER BLOCKS
+// SMART ALERTS — ORDER BLOCKS
 // ============================================================================
 
-alertcondition(bool(bull_ob),        'Bullish OB Formed',    'Bullish order block detected')
-alertcondition(bool(bear_ob),        'Bearish OB Formed',    'Bearish order block detected')
-alertcondition(bool(mitigated_bull), 'Bullish OB Mitigated', 'Bullish order block mitigated')
-alertcondition(bool(mitigated_bear), 'Bearish OB Mitigated', 'Bearish order block mitigated')
+bool ob_bull_alert = bool(bull_ob)
+bool ob_bear_alert = bool(bear_ob)
+
+if ob_bull_alert
+    alert(syminfo.ticker + ' — Bullish Order Block Formed @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if ob_bear_alert
+    alert(syminfo.ticker + ' — Bearish Order Block Formed @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+
+if mitigated_bull
+    alert(syminfo.ticker + ' — Bullish Order Block Mitigated @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if mitigated_bear
+    alert(syminfo.ticker + ' — Bearish Order Block Mitigated @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+
+alertcondition(ob_bull_alert,        'OB Formed (Bullish)',    'Bullish order block detected')
+alertcondition(ob_bear_alert,        'OB Formed (Bearish)',    'Bearish order block detected')
+alertcondition(bool(mitigated_bull), 'OB Mitigated (Bullish)', 'Bullish order block mitigated')
+alertcondition(bool(mitigated_bear), 'OB Mitigated (Bearish)', 'Bearish order block mitigated')
 
 // ============================================================================
-// ALERTS — FAIR VALUE GAPS
+// SMART ALERTS — FAIR VALUE GAPS
 // ============================================================================
 
-alertcondition(fvg_bull_cond,       'Bullish FVG Formed',    'Bullish fair value gap detected')
-alertcondition(fvg_bear_cond,       'Bearish FVG Formed',    'Bearish fair value gap detected')
-alertcondition(fvg_bull_mitigated,  'Bullish FVG Mitigated', 'Bullish fair value gap mitigated')
-alertcondition(fvg_bear_mitigated,  'Bearish FVG Mitigated', 'Bearish fair value gap mitigated')
+if fvg_bull_cond
+    alert(syminfo.ticker + ' — Bullish FVG Formed @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if fvg_bear_cond
+    alert(syminfo.ticker + ' — Bearish FVG Formed @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+
+if fvg_bull_mitigated
+    alert(syminfo.ticker + ' — Bullish FVG Mitigated @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+if fvg_bear_mitigated
+    alert(syminfo.ticker + ' — Bearish FVG Mitigated @ ' + str.tostring(close, format.mintick), alert.freq_once_per_bar_close)
+
+alertcondition(fvg_bull_cond,       'FVG Formed (Bullish)',    'Bullish fair value gap detected')
+alertcondition(fvg_bear_cond,       'FVG Formed (Bearish)',    'Bearish fair value gap detected')
+alertcondition(fvg_bull_mitigated,  'FVG Mitigated (Bullish)', 'Bullish fair value gap mitigated')
+alertcondition(fvg_bear_mitigated,  'FVG Mitigated (Bearish)', 'Bearish fair value gap mitigated')
+
+// ============================================================================
+// SMART ALERTS — LIQUIDITY
+// ============================================================================
+
+if bsl_sweep_alert
+    alert(syminfo.ticker + ' — Buy-Side Liquidity Swept @ ' + str.tostring(high, format.mintick), alert.freq_once_per_bar_close)
+if ssl_sweep_alert
+    alert(syminfo.ticker + ' — Sell-Side Liquidity Swept @ ' + str.tostring(low, format.mintick), alert.freq_once_per_bar_close)
+
+alertcondition(bsl_sweep_alert, 'Liquidity Swept (BSL)', 'BSL level was swept')
+alertcondition(ssl_sweep_alert, 'Liquidity Swept (SSL)', 'SSL level was swept')
